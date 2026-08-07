@@ -562,7 +562,7 @@ def t_update(ctx, SE7K_CTX, stop, module, device, refresh):
         except Exception as e:
             logger.critical(f"{this_t.name}: {e}")
         finally:
-            time.sleep(0.1)
+            time.sleep(0.7)
 
 
 if __name__ == "__main__":
