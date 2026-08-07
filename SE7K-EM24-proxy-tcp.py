@@ -196,17 +196,14 @@ def setBatteryValues(values, block):
     block.add_16bit_uint(1)    ## TODO set correct values
     block.add_16bit_uint(65)   ## TODO set correct values
 
-def t_update_se7k(ctx, stop, module, device, refresh):
+def t_update_se7k(ctx, values):
 
-    this_t = threading.currentThread()
     logger = logging.getLogger()
 
     try:
-        values = module.values(device)
-
         if not values:
             logger.info("no values read from device so discard")
-            return 
+            return False
         
         if values.get("power_ac_int") == 0:
             logger.info("power_ac_int not set")
@@ -302,9 +299,9 @@ def t_update_se7k(ctx, stop, module, device, refresh):
         # ctx.setValues(3, 57854, block_57854.to_registers())
 
     except Exception as e:
-        logger.critical(f"{this_t.name}: {e}")
-        return 
-    return         
+        logger.critical(f"SE7K update failed: {e}")
+        return False
+    return True
 
 
 
@@ -316,15 +313,15 @@ def t_update(ctx, SE7K_CTX, stop, module, device, refresh):
 
     while not stop.is_set():
         try:
-            logger.debug('before t_update_se7k ')
-            if not t_update_se7k(SE7K_CTX, stop, module, device, refresh):
-                logger.debug('update not succesful t_update_se7k ')
-            logger.debug('after t_update_se7k ')
-
             values = module.values(device)
             if not values:
                 logger.debug(f"{this_t.name}: no new values")
-                continue   
+                continue
+
+            logger.debug('before t_update_se7k ')
+            if not t_update_se7k(SE7K_CTX, values):
+                logger.debug('update not succesful t_update_se7k ')
+            logger.debug('after t_update_se7k ')
 
             # use the values from the SE-MTR-3Y-400V-A SE Meter
             values = values["connected_meters"]["Meter1"]      
