@@ -421,9 +421,9 @@ def t_update(ctx, SE7K_CTX, stop, module, device, refresh):
             block_0.add_32bit_int(int(values.get('l12_voltage_int', 0) * voltage_scale * 10)) # l1-l2 voltage
             block_0.add_32bit_int(int(values.get('l23_voltage_int', 0) * voltage_scale * 10)) # l2-l3 voltage
             block_0.add_32bit_int(int(values.get('l31_voltage_int', 0) * voltage_scale * 10)) # l3-l1 voltage
-            block_0.add_32bit_int(int(values.get('l1_current_int', 0) * current_scale * -1000)) # current l1  *1000
-            block_0.add_32bit_int(int(values.get('l2_current_int', 0) * current_scale * -1000)) # current l2
-            block_0.add_32bit_int(int(values.get('l3_current_int', 0) * current_scale * -1000)) # current l3
+            block_0.add_32bit_int(int(abs(values.get('l1_current_int', 0)) * current_scale * 1000)) # current l1  *1000
+            block_0.add_32bit_int(int(abs(values.get('l2_current_int', 0)) * current_scale * 1000)) # current l2
+            block_0.add_32bit_int(int(abs(values.get('l3_current_int', 0)) * current_scale * 1000)) # current l3
             block_0.add_32bit_int(int(values.get('l1_power_int', 0) * power_scale * -10)) # power l1   *10
             block_0.add_32bit_int(int(values.get('l2_power_int', 0) * power_scale * -10)) # power l2
             block_0.add_32bit_int(int(values.get('l3_power_int', 0) * power_scale * -10)) # power l3
@@ -495,7 +495,7 @@ def t_update(ctx, SE7K_CTX, stop, module, device, refresh):
 
             block_254.add_32bit_int(int(values.get('l12_voltage_int', 0) * voltage_scale * 10)) # l1-l2 voltage
             block_254.add_32bit_int(int(values.get('l1n_voltage_int', 0) * voltage_scale * 10)) # l1-n voltage  *10
-            block_254.add_32bit_int(int(values.get('l1_current_int', 0) * current_scale * -1000)) # current l1  *1000
+            block_254.add_32bit_int(int(abs(values.get('l1_current_int', 0)) * current_scale * 1000)) # current l1  *1000
             block_254.add_32bit_int(int(values.get('l1_power_int', 0) * power_scale * -10)) # power l1   *10
             block_254.add_32bit_int(int(values.get('l1_power_apparent_int', 0) * power_apparent_scale * -10)) # apparent power l1   *10
             block_254.add_32bit_int(int(values.get('l1_power_reactive_int', 0) * power_reactive_scale * -10)) # reactive power l1   *10
@@ -503,7 +503,7 @@ def t_update(ctx, SE7K_CTX, stop, module, device, refresh):
 
             block_254.add_32bit_int(int(values.get('l23_voltage_int', 0) * voltage_scale * 10)) # l2-l3 voltage
             block_254.add_32bit_int(int(values.get('l2n_voltage_int', 0) * voltage_scale * 10)) # l2-n voltage
-            block_254.add_32bit_int(int(values.get('l2_current_int', 0) * current_scale * -1000)) # current l2
+            block_254.add_32bit_int(int(abs(values.get('l2_current_int', 0)) * current_scale * 1000)) # current l2
             block_254.add_32bit_int(int(values.get('l2_power_int', 0) * power_scale * -10)) # power l2
             block_254.add_32bit_int(int(values.get('l2_power_apparent_int', 0) * power_apparent_scale * -10)) # apparent power l2
             block_254.add_32bit_int(int(values.get('l2_power_reactive_int', 0) * power_reactive_scale * -10)) # reactive power l2
@@ -511,7 +511,7 @@ def t_update(ctx, SE7K_CTX, stop, module, device, refresh):
 
             block_254.add_32bit_int(int(values.get('l31_voltage_int', 0) * voltage_scale * 10)) # l3-l1 voltage
             block_254.add_32bit_int(int(values.get('l3n_voltage_int', 0) * voltage_scale * 10)) # l3-n voltage
-            block_254.add_32bit_int(int(values.get('l3_current_int', 0) * current_scale * -1000)) # current l3
+            block_254.add_32bit_int(int(abs(values.get('l3_current_int', 0)) * current_scale * 1000)) # current l3
             block_254.add_32bit_int(int(values.get('l3_power_int', 0) * power_scale * -10)) # power l3
             block_254.add_32bit_int(int(values.get('l3_power_apparent_int', 0) * power_apparent_scale * -10)) # apparent power l3
             block_254.add_32bit_int(int(values.get('l3_power_reactive_int', 0) * power_reactive_scale * -10)) # reactive power l3
