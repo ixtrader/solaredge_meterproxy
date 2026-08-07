@@ -406,6 +406,11 @@ def t_update(ctx, SE7K_CTX, stop, module, device, refresh):
 
 
 
+            # apply SunSpec scale factors to convert raw ints to real-world units
+            power_scale = 10**values.get('power_scale_int', 0)
+            power_apparent_scale = 10**values.get('power_apparent_scale_int', 0)
+            power_reactive_scale = 10**values.get('power_reactive_scale_int', 0)
+
             block_0 = BinaryPayloadBuilder(byteorder=Endian.Big, wordorder=Endian.Little)
             block_0.add_32bit_int(int(values.get('l1n_voltage_int', 0)/10)) # l1-n voltage    * 10
             block_0.add_32bit_int(int(values.get('l2n_voltage_int', 0)/10)) # l2-n voltage
@@ -416,20 +421,20 @@ def t_update(ctx, SE7K_CTX, stop, module, device, refresh):
             block_0.add_32bit_int(values.get('l1_current_int', 0)*100) # current l1      * 1000
             block_0.add_32bit_int(values.get('l2_current_int', 0)*100) # current l2
             block_0.add_32bit_int(values.get('l3_current_int', 0)*100) # current l3
-            block_0.add_32bit_int(values.get('l1_power_int', 0)*-10) # power l1   *10
-            block_0.add_32bit_int(values.get('l2_power_int', 0)*-10) # power l2
-            block_0.add_32bit_int(values.get('l3_power_int', 0)*-10) # power l3
-            block_0.add_32bit_int(values.get('l1_power_apparent_int', 0)*-10) # apparent power l1   *10
-            block_0.add_32bit_int(values.get('l2_power_apparent_int', 0)*-10) # apparent power l2
-            block_0.add_32bit_int(values.get('l3_power_apparent_int', 0)*-10) # apparent power l3
-            block_0.add_32bit_int(values.get('l1_power_reactive_int', 0)*-10) # reactive power l1   *10
-            block_0.add_32bit_int(values.get('l2_power_reactive_int', 0)*-10) # reactive power l2
-            block_0.add_32bit_int(values.get('l3_power_reactive_int', 0)*-10) # reactive power l3
+            block_0.add_32bit_int(int(values.get('l1_power_int', 0) * power_scale * -10)) # power l1   *10
+            block_0.add_32bit_int(int(values.get('l2_power_int', 0) * power_scale * -10)) # power l2
+            block_0.add_32bit_int(int(values.get('l3_power_int', 0) * power_scale * -10)) # power l3
+            block_0.add_32bit_int(int(values.get('l1_power_apparent_int', 0) * power_apparent_scale * -10)) # apparent power l1   *10
+            block_0.add_32bit_int(int(values.get('l2_power_apparent_int', 0) * power_apparent_scale * -10)) # apparent power l2
+            block_0.add_32bit_int(int(values.get('l3_power_apparent_int', 0) * power_apparent_scale * -10)) # apparent power l3
+            block_0.add_32bit_int(int(values.get('l1_power_reactive_int', 0) * power_reactive_scale * -10)) # reactive power l1   *10
+            block_0.add_32bit_int(int(values.get('l2_power_reactive_int', 0) * power_reactive_scale * -10)) # reactive power l2
+            block_0.add_32bit_int(int(values.get('l3_power_reactive_int', 0) * power_reactive_scale * -10)) # reactive power l3
             block_0.add_32bit_int(int(values.get('voltage_ln_int', 0)/10)) # l-n voltage                *10
             block_0.add_32bit_int(int(values.get('voltage_ll_int', 0)/10)) # l-l voltage
-            block_0.add_32bit_int(values.get('power_int', 0)*-10) # total power              *10
-            block_0.add_32bit_int(values.get('power_apparent_int', 0)*-10) # total apparent power
-            block_0.add_32bit_int(values.get('power_reactive_int', 0)*-10) # total reactive power
+            block_0.add_32bit_int(int(values.get('power_int', 0) * power_scale * -10)) # total power              *10
+            block_0.add_32bit_int(int(values.get('power_apparent_int', 0) * power_apparent_scale * -10)) # total apparent power
+            block_0.add_32bit_int(int(values.get('power_reactive_int', 0) * power_reactive_scale * -10)) # total reactive power
             block_0.add_16bit_int(int(values.get('l1_power_factor_int', 0)/10)) # power factor l1       *1000
             block_0.add_16bit_int(int(values.get('l2_power_factor_int', 0)/10)) # power factor l2
             block_0.add_16bit_int(int(values.get('l3_power_factor_int', 0)/10)) # power factor l3
@@ -469,9 +474,9 @@ def t_update(ctx, SE7K_CTX, stop, module, device, refresh):
             block_254.add_32bit_int(256)  # unused                                                       *100
             block_254.add_32bit_int(int(values.get('voltage_ln_int', 0)/10)) # l-n voltage                *10
             block_254.add_32bit_int(int(values.get('voltage_ll_int', 0)/10)) # l-l voltage
-            block_254.add_32bit_int(values.get('power_int', 0)*-10) # total power              *10
-            block_254.add_32bit_int(values.get('power_apparent_int', 0)*-10) # total apparent power
-            block_254.add_32bit_int(values.get('power_reactive_int', 0)*-10) # total reactive power
+            block_254.add_32bit_int(int(values.get('power_int', 0) * power_scale * -10)) # total power              *10
+            block_254.add_32bit_int(int(values.get('power_apparent_int', 0) * power_apparent_scale * -10)) # total apparent power
+            block_254.add_32bit_int(int(values.get('power_reactive_int', 0) * power_reactive_scale * -10)) # total reactive power
             block_254.add_32bit_int(int(values.get('power_factor_int', 0)/10)) # power factor
             block_254.add_32bit_int(0) # Value –1 correspond to L1-L3-L2 sequence, value 0 correspond to L1-L2-L3 sequence (this value is meaningful only in case of 3-phase systems)
             block_254.add_32bit_int(int(values.get('frequency_int', 0)/10)) # line frequency           *10
@@ -488,25 +493,25 @@ def t_update(ctx, SE7K_CTX, stop, module, device, refresh):
             block_254.add_32bit_int(int(values.get('l12_voltage_int', 0)/10)) # l1-l2 voltage
             block_254.add_32bit_int(int(values.get('l1n_voltage_int', 0)/10)) # l1-n voltage    * 10
             block_254.add_32bit_int(values.get('l1_current_int', 0)*100) # current l1      * 1000
-            block_254.add_32bit_int(values.get('l1_power_int', 0)*-10) # power l1   *10
-            block_254.add_32bit_int(values.get('l1_power_apparent_int', 0)*-10) # apparent power l1   *10
-            block_254.add_32bit_int(values.get('l1_power_reactive_int', 0)*-10) # reactive power l1   *10
+            block_254.add_32bit_int(int(values.get('l1_power_int', 0) * power_scale * -10)) # power l1   *10
+            block_254.add_32bit_int(int(values.get('l1_power_apparent_int', 0) * power_apparent_scale * -10)) # apparent power l1   *10
+            block_254.add_32bit_int(int(values.get('l1_power_reactive_int', 0) * power_reactive_scale * -10)) # reactive power l1   *10
             block_254.add_32bit_int(int(values.get('l1_power_factor_int', 0)/10)) # power factor l1       *1000
 
             block_254.add_32bit_int(int(values.get('l23_voltage_int', 0)/10)) # l2-l3 voltage
             block_254.add_32bit_int(int(values.get('l2n_voltage_int', 0)/10)) # l2-n voltage
             block_254.add_32bit_int(values.get('l2_current_int', 0)*100) # current l2
-            block_254.add_32bit_int(values.get('l2_power_int', 0)*-10) # power l2
-            block_254.add_32bit_int(values.get('l2_power_apparent_int', 0)*-10) # apparent power l2
-            block_254.add_32bit_int(values.get('l2_power_reactive_int', 0)*-10) # reactive power l2
+            block_254.add_32bit_int(int(values.get('l2_power_int', 0) * power_scale * -10)) # power l2
+            block_254.add_32bit_int(int(values.get('l2_power_apparent_int', 0) * power_apparent_scale * -10)) # apparent power l2
+            block_254.add_32bit_int(int(values.get('l2_power_reactive_int', 0) * power_reactive_scale * -10)) # reactive power l2
             block_254.add_32bit_int(int(values.get('l2_power_factor_int', 0)/10)) # power factor l2
 
             block_254.add_32bit_int(int(values.get('l31_voltage_int', 0)/10)) # l3-l1 voltage
             block_254.add_32bit_int(int(values.get('l3n_voltage_int', 0)/10)) # l3-n voltage
             block_254.add_32bit_int(values.get('l3_current_int', 0)*100) # current l3
-            block_254.add_32bit_int(values.get('l3_power_int', 0)*-10) # power l3
-            block_254.add_32bit_int(values.get('l3_power_apparent_int', 0)*-10) # apparent power l3
-            block_254.add_32bit_int(values.get('l3_power_reactive_int', 0)*-10) # reactive power l3
+            block_254.add_32bit_int(int(values.get('l3_power_int', 0) * power_scale * -10)) # power l3
+            block_254.add_32bit_int(int(values.get('l3_power_apparent_int', 0) * power_apparent_scale * -10)) # apparent power l3
+            block_254.add_32bit_int(int(values.get('l3_power_reactive_int', 0) * power_reactive_scale * -10)) # reactive power l3
             block_254.add_32bit_int(int(values.get('l3_power_factor_int', 0)/10)) # power factor l3
 
             block_254.add_32bit_int(0) # Value –1 correspond to L1-L3-L2 sequence, value 0 correspond to L1-L2-L3 sequence (this value is meaningful only in case of 3-phase systems)
