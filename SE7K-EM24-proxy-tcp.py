@@ -31,7 +31,7 @@ class EM24SlaveContext(ModbusSlaveContext):
         :return: Liste der Registerwerte.
         """
         if (address == 11 and count==1):
-            logger.info("Gavazzi Model number 1648 supplied")
+            logger.debug("Gavazzi model number 1648 supplied")
             return [1648]
         return super().getValues(fx, address, count)
 
@@ -52,7 +52,7 @@ class ModbusMyTcpServer(ModbusTcpServer):
         
         logger = logging.getLogger()
         if self.clientCounter[client[0]]%1000 == 1:
-            logger.info("Started thread to serve client at " + str(client[0]) + " clientCounter = " + str(self.clientCounter[client[0]]) + " request"+ str(request))
+            logger.debug("Served client %s, request count=%s, request=%s", client[0], self.clientCounter[client[0]], request)
 
         super().process_request(request,client)
 
@@ -118,6 +118,53 @@ def _scale_factor(values, key):
     if scale is None or scale == -32768:
         return 0
     return 10 ** scale
+
+
+def _log_meter_values(logger, values):
+    invalid_scales = [
+        key[:-4]
+        for key in (
+            "energy_apparent_scale_int",
+            "energy_reactive_scale_int",
+        )
+        if values.get(key) in (None, -32768)
+    ]
+    if invalid_scales:
+        logger.debug("Meter: nicht implementierte Skalen: %s", ", ".join(invalid_scales))
+
+    current_scale = _scale_factor(values, "current_scale_int")
+    voltage_scale = _scale_factor(values, "voltage_scale_int")
+    frequency_scale = _scale_factor(values, "frequency_scale_int")
+    power_scale = _scale_factor(values, "power_scale_int")
+    apparent_power_scale = _scale_factor(values, "power_apparent_scale_int")
+    reactive_power_scale = _scale_factor(values, "power_reactive_scale_int")
+    power_factor_scale = _scale_factor(values, "power_factor_scale_int")
+
+    logger.debug(
+        "Meter: U_LN=%.2f/%.2f/%.2f V, I=%.3f/%.3f/%.3f A, "
+        "P=%.1f W, S=%.1f VA, Q=%.1f var, cosphi=%.3f, f=%.2f Hz",
+        values.get("l1n_voltage_int", 0) * voltage_scale,
+        values.get("l2n_voltage_int", 0) * voltage_scale,
+        values.get("l3n_voltage_int", 0) * voltage_scale,
+        values.get("l1_current_int", 0) * current_scale,
+        values.get("l2_current_int", 0) * current_scale,
+        values.get("l3_current_int", 0) * current_scale,
+        values.get("power_int", 0) * power_scale,
+        values.get("power_apparent_int", 0) * apparent_power_scale,
+        values.get("power_reactive_int", 0) * reactive_power_scale,
+        values.get("power_factor_int", 0) * power_factor_scale,
+        values.get("frequency_int", 0) * frequency_scale,
+    )
+
+    logger.debug(
+        "Meter-Energie: Import aktiv=%.2f kWh, Export aktiv=%.2f kWh",
+        values.get("import_energy_active_int", 0)
+        * _scale_factor(values, "energy_active_scale_int")
+        / 1000,
+        values.get("export_energy_active_int", 0)
+        * _scale_factor(values, "energy_active_scale_int")
+        / 1000,
+    )
 
 
 def setMeterValues(values, block):
@@ -269,15 +316,15 @@ def t_update_se7k(ctx, values):
 
     try:
         if not values:
-            logger.info("no values read from device so discard")
+            logger.debug("No values read from device; update discarded")
             return False
         
         if values.get("power_ac_int") == 0:
-            logger.info("power_ac_int not set")
+            logger.debug("power_ac_int is zero")
         if values.get("energy_total_int") == 0:
-            logger.info("energy_total_int not set")
+            logger.debug("energy_total_int is zero")
         if values.get("frequency_int") == 0:
-            logger.info("power_ac_int not set so discard update")
+            logger.debug("frequency_int is zero; update may be invalid")
 
         block_40000 = BinaryPayloadBuilder(byteorder=Endian.Big, wordorder=Endian.Big)
         block_40000.add_string("SunS") 
@@ -397,104 +444,14 @@ def t_update(ctx, SE7K_CTX, stop, module, device, refresh):
                 logger.debug(f"{this_t.name}: no new values")
                 continue
 
-            logger.debug('before t_update_se7k ')
             if not t_update_se7k(SE7K_CTX, values):
-                logger.debug('update not succesful t_update_se7k ')
-            logger.debug('after t_update_se7k ')
+                logger.debug("SE7K register update was not applied")
 
             # use the values from the SE-MTR-3Y-400V-A SE Meter
             values = values["connected_meters"]["Meter1"]      
 
             if logger.isEnabledFor(logging.DEBUG):
-                current_scale_value = _scale_factor(values, 'current_scale_int')
-                logger.info("current raw: %s", values.get('current_int', 0))
-                logger.info("current: %s", values.get('current_int', 0) * current_scale_value)
-                logger.info("l1_current: %s", values.get('l1_current_int', 0) * current_scale_value)
-                logger.info("l2_current: %s", values.get('l2_current_int', 0) * current_scale_value)
-                logger.info("l3_current: %s", values.get('l3_current_int', 0) * current_scale_value)
-                logger.debug("current scale: %s", values.get('current_scale_int', 0))
-
-                voltage_scale_value = _scale_factor(values, 'voltage_scale_int')
-                logger.debug("voltage_ln raw: %s", values.get('voltage_ln_int', 0))
-                logger.debug("voltage_ln: %s", values.get('voltage_ln_int', 0) * voltage_scale_value)
-                logger.debug("l1n_voltage: %s", values.get('l1n_voltage_int', 0) * voltage_scale_value)
-                logger.debug("l2n_voltage: %s", values.get('l2n_voltage_int', 0) * voltage_scale_value)
-                logger.debug("l3n_voltage: %s", values.get('l3n_voltage_int', 0) * voltage_scale_value)
-                logger.debug("voltage scale: %s", values.get('voltage_scale_int', 0))
-
-                logger.debug("voltage_ll raw: %s", values.get('voltage_ll_int', 0))
-                logger.debug("voltage_ll: %s", values.get('voltage_ll_int', 0) * voltage_scale_value)
-                logger.debug("l12_voltage: %s", values.get('l12_voltage_int', 0) * voltage_scale_value)
-                logger.debug("l23_voltage: %s", values.get('l23_voltage_int', 0) * voltage_scale_value)
-                logger.debug("l31_voltage: %s", values.get('l31_voltage_int', 0) * voltage_scale_value)
-
-                
-                frequency_scale_value = _scale_factor(values, 'frequency_scale_int')
-                logger.info("frequency raw: %s", values.get('frequency_int', 0))
-                logger.info("frequency: %s", values.get('frequency_int', 0) * frequency_scale_value)
-                logger.debug("frequency scale: %s", values.get('frequency_scale_int', 0))
-
-                power_scale_value = _scale_factor(values, 'power_scale_int')
-                logger.info("power raw: %s", values.get('power_int', 0))
-                logger.info("power: %s", values.get('power_int', 0) * power_scale_value)
-                logger.info("l1_power: %s", values.get('l1_power_int', 0) * power_scale_value)
-                logger.info("l2_power: %s", values.get('l2_power_int', 0) * power_scale_value)
-                logger.info("l3_power: %s", values.get('l3_power_int', 0) * power_scale_value)
-                logger.debug("power scale: %s", values.get('power_scale_int', 0))
-
-                power_apparent_scale_value = _scale_factor(values, 'power_apparent_scale_int')
-                logger.info("power_apparent raw: %s", values.get('power_apparent_int', 0))
-                logger.info("power_apparent: %s", values.get('power_apparent_int', 0) * power_apparent_scale_value)
-                logger.info("l1_power_apparent: %s", values.get('l1_power_apparent_int', 0) * power_apparent_scale_value)
-                logger.info("l2_power_apparent: %s", values.get('l2_power_apparent_int', 0) * power_apparent_scale_value)
-                logger.info("l3_power_apparent: %s", values.get('l3_power_apparent_int', 0) * power_apparent_scale_value)
-                logger.debug("power apparent scale: %s", values.get('power_apparent_scale_int', 0))
-
-                power_reactive_scale_value = _scale_factor(values, 'power_reactive_scale_int')
-                logger.info("power_reactive raw: %s", values.get('power_reactive_int', 0))
-                logger.info("power_reactive: %s", values.get('power_reactive_int', 0) * power_reactive_scale_value)
-                logger.info("l1_power_reactive: %s", values.get('l1_power_reactive_int', 0) * power_reactive_scale_value)
-                logger.info("l2_power_reactive: %s", values.get('l2_power_reactive_int', 0) * power_reactive_scale_value)
-                logger.info("l3_power_reactive: %s", values.get('l3_power_reactive_int', 0) * power_reactive_scale_value)
-                logger.debug("power reactive scale: %s", values.get('power_reactive_scale_int', 0))
-
-                power_factor_scale_value = _scale_factor(values, 'power_factor_scale_int')
-                logger.debug("power_factor raw: %s", values.get('power_factor_int', 0))
-                logger.debug("power_factor: %.3f (%.3f%%)",
-                             values.get('power_factor_int', 0) * power_factor_scale_value / 100,
-                             values.get('power_factor_int', 0) * power_factor_scale_value)
-                logger.debug("l1_power_factor: %.3f (%.3f%%)",
-                             values.get('l1_power_factor_int', 0) * power_factor_scale_value / 100,
-                             values.get('l1_power_factor_int', 0) * power_factor_scale_value)
-                logger.debug("l2_power_factor: %.3f (%.3f%%)",
-                             values.get('l2_power_factor_int', 0) * power_factor_scale_value / 100,
-                             values.get('l2_power_factor_int', 0) * power_factor_scale_value)
-                logger.debug("l3_power_factor: %.3f (%.3f%%)",
-                             values.get('l3_power_factor_int', 0) * power_factor_scale_value / 100,
-                             values.get('l3_power_factor_int', 0) * power_factor_scale_value)
-                logger.debug("power_factor scale: %s", values.get('power_factor_scale_int', 0))
-
-                energy_active_scale_value = _scale_factor(values, 'energy_active_scale_int')
-                logger.debug("export_energy_active raw: %s", values.get('export_energy_active_int', 0))
-                logger.debug("export_energy_active: %s", values.get('export_energy_active_int', 0) * energy_active_scale_value)
-                logger.debug("l1_export_energy_active: %s", values.get('l1_export_energy_active_int', 0) * energy_active_scale_value)
-                logger.debug("l2_export_energy_active: %s", values.get('l2_export_energy_active_int', 0) * energy_active_scale_value)
-                logger.debug("l3_export_energy_active: %s", values.get('l3_export_energy_active_int', 0) * energy_active_scale_value)
-                logger.debug("energy active scale: %s", values.get('energy_active_scale_int', 0))
-
-                logger.debug("import_energy_active raw: %s", values.get('import_energy_active_int', 0))
-                logger.debug("import_energy_active: %s", values.get('import_energy_active_int', 0) * energy_active_scale_value)
-                logger.debug("l1_import_energy_active: %s", values.get('l1_import_energy_active_int', 0) * energy_active_scale_value)
-                logger.debug("l2_import_energy_active: %s", values.get('l2_import_energy_active_int', 0) * energy_active_scale_value)
-                logger.debug("l3_import_energy_active: %s", values.get('l3_import_energy_active_int', 0) * energy_active_scale_value)
-
-                energy_apparent_scale_value = _scale_factor(values, 'energy_apparent_scale_int')
-                logger.debug("import_energy_apparent raw: %s", values.get('import_energy_apparent_int', 0))
-                logger.debug("import_energy_apparent: %s", values.get('import_energy_apparent_int', 0) * energy_apparent_scale_value)
-                logger.debug("l1_import_energy_apparent: %s", values.get('l1_import_energy_apparent_int', 0) * energy_apparent_scale_value)
-                logger.debug("l2_import_energy_apparent: %s", values.get('l2_import_energy_apparent_int', 0) * energy_apparent_scale_value)
-                logger.debug("l3_import_energy_apparent: %s", values.get('l3_import_energy_apparent_int', 0) * energy_apparent_scale_value)
-                logger.debug("energy apparent scale: %s", values.get('energy_apparent_scale_int', 0))
+                _log_meter_values(logger, values)
 
 
 
@@ -703,6 +660,7 @@ if __name__ == "__main__":
     logger = logging.getLogger()
     logger.setLevel(getattr(logging, confparser["server"].get("log_level", fallback=default_config["server"]["log_level"]).upper()))
     logger.addHandler(log_handler)
+    logging.getLogger("pymodbus").setLevel(logging.INFO)
 
     if args.verbose:
         logger.setLevel(logging.DEBUG)
