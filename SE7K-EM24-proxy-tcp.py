@@ -4,6 +4,7 @@ import argparse
 import configparser
 import importlib
 import logging
+import math
 import sys
 import threading
 import time
@@ -85,6 +86,10 @@ def StartMyTcpServer(context=None, identity=None, address=None,
     server.serve_forever()
 
 
+def _line_voltage(phase_a, phase_b):
+    return int(round(math.sqrt(phase_a ** 2 + phase_b ** 2 + phase_a * phase_b)))
+
+
 def setMeterValues(values, block):
     if not values:
         block.add_16bit_uint(0)
@@ -112,10 +117,18 @@ def setMeterValues(values, block):
     block.add_16bit_uint(values.get("l1n_voltage_int" , 0))
     block.add_16bit_uint(values.get("l2n_voltage_int" , 0))
     block.add_16bit_uint(values.get("l3n_voltage_int" , 0))
-    block.add_16bit_uint(values.get("voltage_ll_int" , 0))
-    block.add_16bit_uint(values.get("l1n_voltage_int" , 0))
-    block.add_16bit_uint(values.get("l2n_voltage_int" , 0))
-    block.add_16bit_uint(values.get("l3n_voltage_int" , 0))
+    l1n_voltage = values.get("l1n_voltage_int", 0)
+    l2n_voltage = values.get("l2n_voltage_int", 0)
+    l3n_voltage = values.get("l3n_voltage_int", 0)
+    l12_voltage = _line_voltage(l1n_voltage, l2n_voltage)
+    l23_voltage = _line_voltage(l2n_voltage, l3n_voltage)
+    l31_voltage = _line_voltage(l3n_voltage, l1n_voltage)
+    voltage_ll = int(round((l12_voltage + l23_voltage + l31_voltage) / 3))
+
+    block.add_16bit_uint(voltage_ll)
+    block.add_16bit_uint(l12_voltage)
+    block.add_16bit_uint(l23_voltage)
+    block.add_16bit_uint(l31_voltage)
     block.add_16bit_int (values.get("voltage_scale_int" , 0))
     
     block.add_16bit_uint(values.get("frequency_int" , 0))
@@ -281,13 +294,13 @@ def t_update_se7k(ctx, values):
         block_40000.add_16bit_int(values.get("active_power_limit_int" , 0))
         block_40000.add_32bit_float(values.get("cosphi" , 0))
 
-        block_40000.add_string("123456789012345678901234") # 12 dummy worter = 24 Byte
+        block_40000.add_string("123456789012345678901234") # 12 dummy words = 24 bytes
         ctx.setValues(3, 40000, block_40000.to_registers())
 
         block_40121 = BinaryPayloadBuilder(byteorder=Endian.Big, wordorder=Endian.Big)
-        setMeterValues(values["connected_meters"]["Meter1"],block_40121)
+        setMeterValues(values["connected_meters"]["Meter1"], block_40121)
         ctx.setValues(3, 40121, block_40121.to_registers())
-        
+
         # block_40295 = BinaryPayloadBuilder(byteorder=Endian.Big, wordorder=Endian.Big)
         # ctx.setValues(3, 40295, block_40295.to_registers())
         # block_40469 = BinaryPayloadBuilder(byteorder=Endian.Big, wordorder=Endian.Big)
@@ -297,7 +310,6 @@ def t_update_se7k(ctx, values):
         # ctx.setValues(3, 57598, block_57598.to_registers())
         # block_57854 = BinaryPayloadBuilder(byteorder=Endian.Big, wordorder=Endian.Big)
         # ctx.setValues(3, 57854, block_57854.to_registers())
-
     except Exception as e:
         logger.critical(f"SE7K update failed: {e}")
         return False
@@ -373,12 +385,21 @@ def t_update(ctx, SE7K_CTX, stop, module, device, refresh):
                 logger.info(values.get('l3_power_reactive_int', 0)*10**values.get('power_reactive_scale_int', 0))
                 logger.info(values.get('power_reactive_scale_int', 0))
 
-                logger.info("power_factor:"+str(values.get('power_factor_int', 0)))          
-                logger.info(values.get('power_factor_int', 0)*10**values.get('power_factor_scale_int', 0))
-                logger.info(values.get('l1_power_factor_int', 0)*10**values.get('power_factor_scale_int', 0))
-                logger.info(values.get('l2_power_factor_int', 0)*10**values.get('power_factor_scale_int', 0))
-                logger.info(values.get('l3_power_factor_int', 0)*10**values.get('power_factor_scale_int', 0))
-                logger.info(values.get('power_factor_scale_int', 0))
+                power_factor_scale_value = 10**values.get('power_factor_scale_int', 0)
+                logger.debug("power_factor raw: %s", values.get('power_factor_int', 0))
+                logger.debug("power_factor: %.3f (%.3f%%)",
+                             values.get('power_factor_int', 0) * power_factor_scale_value / 100,
+                             values.get('power_factor_int', 0) * power_factor_scale_value)
+                logger.debug("l1_power_factor: %.3f (%.3f%%)",
+                             values.get('l1_power_factor_int', 0) * power_factor_scale_value / 100,
+                             values.get('l1_power_factor_int', 0) * power_factor_scale_value)
+                logger.debug("l2_power_factor: %.3f (%.3f%%)",
+                             values.get('l2_power_factor_int', 0) * power_factor_scale_value / 100,
+                             values.get('l2_power_factor_int', 0) * power_factor_scale_value)
+                logger.debug("l3_power_factor: %.3f (%.3f%%)",
+                             values.get('l3_power_factor_int', 0) * power_factor_scale_value / 100,
+                             values.get('l3_power_factor_int', 0) * power_factor_scale_value)
+                logger.debug("power_factor scale: %s", values.get('power_factor_scale_int', 0))
 
                 logger.debug("export_energy_active:"+str(values.get('export_energy_active_int', 0)))          
                 logger.debug(values.get('export_energy_active_int', 0)*10**values.get('energy_active_scale_int', 0))
@@ -568,7 +589,7 @@ def t_update(ctx, SE7K_CTX, stop, module, device, refresh):
         except Exception as e:
             logger.critical(f"{this_t.name}: {e}")
         finally:
-            time.sleep(0.1)
+            time.sleep(0.9)
 
 
 if __name__ == "__main__":
