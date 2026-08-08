@@ -113,6 +113,13 @@ def _line_voltage(phase_a, phase_b):
     return int(round(math.sqrt(phase_a ** 2 + phase_b ** 2 + phase_a * phase_b)))
 
 
+def _scale_factor(values, key):
+    scale = values.get(key, 0)
+    if scale is None or scale == -32768:
+        return 0
+    return 10 ** scale
+
+
 def setMeterValues(values, block):
     """Schreibt EM24-Messwerte in einen Payload.
 
@@ -399,7 +406,7 @@ def t_update(ctx, SE7K_CTX, stop, module, device, refresh):
             values = values["connected_meters"]["Meter1"]      
 
             if logger.isEnabledFor(logging.DEBUG):
-                current_scale_value = 10**values.get('current_scale_int', 0)
+                current_scale_value = _scale_factor(values, 'current_scale_int')
                 logger.info("current raw: %s", values.get('current_int', 0))
                 logger.info("current: %s", values.get('current_int', 0) * current_scale_value)
                 logger.info("l1_current: %s", values.get('l1_current_int', 0) * current_scale_value)
@@ -407,7 +414,7 @@ def t_update(ctx, SE7K_CTX, stop, module, device, refresh):
                 logger.info("l3_current: %s", values.get('l3_current_int', 0) * current_scale_value)
                 logger.debug("current scale: %s", values.get('current_scale_int', 0))
 
-                voltage_scale_value = 10**values.get('voltage_scale_int', 0)
+                voltage_scale_value = _scale_factor(values, 'voltage_scale_int')
                 logger.debug("voltage_ln raw: %s", values.get('voltage_ln_int', 0))
                 logger.debug("voltage_ln: %s", values.get('voltage_ln_int', 0) * voltage_scale_value)
                 logger.debug("l1n_voltage: %s", values.get('l1n_voltage_int', 0) * voltage_scale_value)
@@ -422,12 +429,12 @@ def t_update(ctx, SE7K_CTX, stop, module, device, refresh):
                 logger.debug("l31_voltage: %s", values.get('l31_voltage_int', 0) * voltage_scale_value)
 
                 
-                frequency_scale_value = 10**values.get('frequency_scale_int', 0)
+                frequency_scale_value = _scale_factor(values, 'frequency_scale_int')
                 logger.info("frequency raw: %s", values.get('frequency_int', 0))
                 logger.info("frequency: %s", values.get('frequency_int', 0) * frequency_scale_value)
                 logger.debug("frequency scale: %s", values.get('frequency_scale_int', 0))
 
-                power_scale_value = 10**values.get('power_scale_int', 0)
+                power_scale_value = _scale_factor(values, 'power_scale_int')
                 logger.info("power raw: %s", values.get('power_int', 0))
                 logger.info("power: %s", values.get('power_int', 0) * power_scale_value)
                 logger.info("l1_power: %s", values.get('l1_power_int', 0) * power_scale_value)
@@ -435,7 +442,7 @@ def t_update(ctx, SE7K_CTX, stop, module, device, refresh):
                 logger.info("l3_power: %s", values.get('l3_power_int', 0) * power_scale_value)
                 logger.debug("power scale: %s", values.get('power_scale_int', 0))
 
-                power_apparent_scale_value = 10**values.get('power_apparent_scale_int', 0)
+                power_apparent_scale_value = _scale_factor(values, 'power_apparent_scale_int')
                 logger.info("power_apparent raw: %s", values.get('power_apparent_int', 0))
                 logger.info("power_apparent: %s", values.get('power_apparent_int', 0) * power_apparent_scale_value)
                 logger.info("l1_power_apparent: %s", values.get('l1_power_apparent_int', 0) * power_apparent_scale_value)
@@ -443,7 +450,7 @@ def t_update(ctx, SE7K_CTX, stop, module, device, refresh):
                 logger.info("l3_power_apparent: %s", values.get('l3_power_apparent_int', 0) * power_apparent_scale_value)
                 logger.debug("power apparent scale: %s", values.get('power_apparent_scale_int', 0))
 
-                power_reactive_scale_value = 10**values.get('power_reactive_scale_int', 0)
+                power_reactive_scale_value = _scale_factor(values, 'power_reactive_scale_int')
                 logger.info("power_reactive raw: %s", values.get('power_reactive_int', 0))
                 logger.info("power_reactive: %s", values.get('power_reactive_int', 0) * power_reactive_scale_value)
                 logger.info("l1_power_reactive: %s", values.get('l1_power_reactive_int', 0) * power_reactive_scale_value)
@@ -451,7 +458,7 @@ def t_update(ctx, SE7K_CTX, stop, module, device, refresh):
                 logger.info("l3_power_reactive: %s", values.get('l3_power_reactive_int', 0) * power_reactive_scale_value)
                 logger.debug("power reactive scale: %s", values.get('power_reactive_scale_int', 0))
 
-                power_factor_scale_value = 10**values.get('power_factor_scale_int', 0)
+                power_factor_scale_value = _scale_factor(values, 'power_factor_scale_int')
                 logger.debug("power_factor raw: %s", values.get('power_factor_int', 0))
                 logger.debug("power_factor: %.3f (%.3f%%)",
                              values.get('power_factor_int', 0) * power_factor_scale_value / 100,
@@ -467,7 +474,7 @@ def t_update(ctx, SE7K_CTX, stop, module, device, refresh):
                              values.get('l3_power_factor_int', 0) * power_factor_scale_value)
                 logger.debug("power_factor scale: %s", values.get('power_factor_scale_int', 0))
 
-                energy_active_scale_value = 10**values.get('energy_active_scale_int', 0)
+                energy_active_scale_value = _scale_factor(values, 'energy_active_scale_int')
                 logger.debug("export_energy_active raw: %s", values.get('export_energy_active_int', 0))
                 logger.debug("export_energy_active: %s", values.get('export_energy_active_int', 0) * energy_active_scale_value)
                 logger.debug("l1_export_energy_active: %s", values.get('l1_export_energy_active_int', 0) * energy_active_scale_value)
@@ -481,7 +488,7 @@ def t_update(ctx, SE7K_CTX, stop, module, device, refresh):
                 logger.debug("l2_import_energy_active: %s", values.get('l2_import_energy_active_int', 0) * energy_active_scale_value)
                 logger.debug("l3_import_energy_active: %s", values.get('l3_import_energy_active_int', 0) * energy_active_scale_value)
 
-                energy_apparent_scale_value = 10**values.get('energy_apparent_scale_int', 0)
+                energy_apparent_scale_value = _scale_factor(values, 'energy_apparent_scale_int')
                 logger.debug("import_energy_apparent raw: %s", values.get('import_energy_apparent_int', 0))
                 logger.debug("import_energy_apparent: %s", values.get('import_energy_apparent_int', 0) * energy_apparent_scale_value)
                 logger.debug("l1_import_energy_apparent: %s", values.get('l1_import_energy_apparent_int', 0) * energy_apparent_scale_value)
@@ -492,15 +499,15 @@ def t_update(ctx, SE7K_CTX, stop, module, device, refresh):
 
 
             # apply SunSpec scale factors to convert raw ints to real-world units
-            power_scale = 10**values.get('power_scale_int', 0)
-            power_apparent_scale = 10**values.get('power_apparent_scale_int', 0)
-            power_reactive_scale = 10**values.get('power_reactive_scale_int', 0)
-            current_scale = 10**values.get('current_scale_int', 0)
-            voltage_scale = 10**values.get('voltage_scale_int', 0)
-            frequency_scale = 10**values.get('frequency_scale_int', 0)
-            power_factor_scale = 10**values.get('power_factor_scale_int', 0)
-            energy_active_scale = 10**values.get('energy_active_scale_int', 0)
-            energy_apparent_scale = 10**values.get('energy_apparent_scale_int', 0)
+            power_scale = _scale_factor(values, 'power_scale_int')
+            power_apparent_scale = _scale_factor(values, 'power_apparent_scale_int')
+            power_reactive_scale = _scale_factor(values, 'power_reactive_scale_int')
+            current_scale = _scale_factor(values, 'current_scale_int')
+            voltage_scale = _scale_factor(values, 'voltage_scale_int')
+            frequency_scale = _scale_factor(values, 'frequency_scale_int')
+            power_factor_scale = _scale_factor(values, 'power_factor_scale_int')
+            energy_active_scale = _scale_factor(values, 'energy_active_scale_int')
+            energy_apparent_scale = _scale_factor(values, 'energy_apparent_scale_int')
 
             block_0 = BinaryPayloadBuilder(byteorder=Endian.Big, wordorder=Endian.Little)
             block_0.add_32bit_int(int(values.get('l1n_voltage_int', 0) * voltage_scale * 10)) # l1-n voltage  *10
