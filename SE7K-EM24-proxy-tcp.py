@@ -22,6 +22,14 @@ from pymodbus.payload import BinaryPayloadBuilder
 
 class EM24SlaveContext(ModbusSlaveContext):
     def getValues(self, fx, address, count=1):
+        """Liest EM24-Register.
+
+        Wird vom Pymodbus-Server bei jeder Registeranfrage aufgerufen.
+        :param fx: Modbus-Funktionscode des Lesezugriffs.
+        :param address: Startadresse des angeforderten Registers.
+        :param count: Anzahl der zu lesenden Register, standardmaessig 1.
+        :return: Liste der Registerwerte.
+        """
         if (address == 11 and count==1):
             logger.info("Gavazzi Model number 1648 supplied")
             return [1648]
@@ -33,10 +41,12 @@ class ModbusMyTcpServer(ModbusTcpServer):
     clientCounter={}
 
     def process_request(self, request, client):
-        """ Callback for connecting a new client thread
+        """Verarbeitet eine Modbus-Anfrage und zaehlt Clientverbindungen.
 
-        :param request: The request to handle
-        :param client: The address of the client
+        Wird von Pymodbus fuer jede eingehende Anfrage aufgerufen.
+        :param request: Dekodierte Modbus-Anfrage.
+        :param client: Clientadresse als Netzwerkadresse/Tuple.
+        :return: Rueckgabewert der Basisklassenimplementierung.
         """
         self.clientCounter[client[0]] = self.clientCounter.get(client[0],0) + 1
         
@@ -47,16 +57,20 @@ class ModbusMyTcpServer(ModbusTcpServer):
         super().process_request(request,client)
 
     def shutdown(self):
-        """ Stops the serve_forever loop.
+        """Beendet den Modbus-Server.
 
-        Overridden to signal handlers to stop.
+        Wird beim Herunterfahren oder durch Pymodbus aufgerufen.
+        :return: Rueckgabewert der Basisklassenimplementierung.
         """
         logger = logging.getLogger()
         logger.info("shutdown to serve client")
         super().shutdown()
 
     def server_close(self):
-        """ Callback for stopping the running server
+        """Schliesst den Modbus-Server.
+
+        Wird nach dem Ende der Server-Schleife von Pymodbus aufgerufen.
+        :return: Rueckgabewert der Basisklassenimplementierung.
         """
         logger = logging.getLogger()
         logger.debug("Modbus server stopped")
@@ -68,15 +82,17 @@ class ModbusMyTcpServer(ModbusTcpServer):
 # --------------------------------------------------------------------------- #
 def StartMyTcpServer(context=None, identity=None, address=None,
                    custom_functions=[], **kwargs):
-    """ A factory to start and run a tcp modbus server
+    """Erzeugt und startet den TCP-Server.
 
-    :param context: The ModbusServerContext datastore
-    :param identity: An optional identify structure
-    :param address: An optional (interface, port) to bind to.
-    :param custom_functions: An optional list of custom function classes
-        supported by server instance.
-    :param ignore_missing_slaves: True to not send errors on a request to a
-                                      missing slave
+    Wird einmal aus dem Hauptprogramm aufgerufen und blockiert anschliessend
+    in der Server-Schleife.
+    :param context: Modbus-Datenmodell mit den Slave-Kontexten.
+    :param identity: Optionale Modbus-Geraeteidentifikation.
+    :param address: Bind-Adresse als `(host, port)`-Tuple.
+    :param custom_functions: Optionale Liste zusaetzlicher Modbus-Funktionen.
+    :param kwargs: Weitere Optionen fuer den Pymodbus-Server, insbesondere
+        der Framer.
+    :return: Kehrt erst nach dem Beenden des Servers zurueck.
     """
     framer = kwargs.pop("framer", ModbusSocketFramer)
     server = ModbusMyTcpServer(context, framer, identity, address, **kwargs)
@@ -87,10 +103,26 @@ def StartMyTcpServer(context=None, identity=None, address=None,
 
 
 def _line_voltage(phase_a, phase_b):
+    """Berechnet die Leiterspannung aus zwei Phasenspannungen.
+
+    Wird von :func:`setMeterValues` fuer die EM24-Leiterspannungen aufgerufen.
+    :param phase_a: Erste Phasenspannung als skalierten Registerwert.
+    :param phase_b: Zweite Phasenspannung als skalierten Registerwert.
+    :return: Gerundeter positiver Leiterspannungswert im Registerformat.
+    """
     return int(round(math.sqrt(phase_a ** 2 + phase_b ** 2 + phase_a * phase_b)))
 
 
 def setMeterValues(values, block):
+    """Schreibt EM24-Messwerte in einen Payload.
+
+    Wird bei jeder Messwertaktualisierung aus dem Update-Thread aufgerufen.
+    :param values: Dictionary mit Rohwerten und SunSpec-Scale-Faktoren des
+        angeschlossenen Zaehlers.
+    :param block: BinaryPayloadBuilder, in den die EM24-Register geschrieben
+        werden.
+    :return: None; der Payload wird direkt veraendert.
+    """
     if not values:
         block.add_16bit_uint(0)
         block.add_16bit_uint(0)
@@ -201,6 +233,14 @@ def setMeterValues(values, block):
 
 
 def setBatteryValues(values, block):
+    """Schreibt Batterie-Modelldaten in einen Payload.
+
+    Ist derzeit eine ungenutzte Erweiterung und wird von keinem aktiven
+    Pfad aufgerufen.
+    :param values: Dictionary mit Batterie-Rohwerten oder ein leerer Wert.
+    :param block: BinaryPayloadBuilder fuer die Batterie-Register.
+    :return: None; der Payload wird direkt veraendert.
+    """
     if not values:
         block.add_16bit_uint(0)
         block.add_16bit_uint(0)
@@ -210,6 +250,13 @@ def setBatteryValues(values, block):
     block.add_16bit_uint(65)   ## TODO set correct values
 
 def t_update_se7k(ctx, values):
+    """Schreibt SE7K-Messwerte in die Register.
+
+    Wird von :func:`t_update` in jedem Aktualisierungszyklus aufgerufen.
+    :param ctx: ModbusSlaveContext des SE7K-Zielmodells.
+    :param values: Dictionary mit Inverterwerten, Rohwerten und Scale-Faktoren.
+    :return: True bei erfolgreicher Aktualisierung, sonst False.
+    """
 
     logger = logging.getLogger()
 
@@ -319,6 +366,19 @@ def t_update_se7k(ctx, values):
 
 
 def t_update(ctx, SE7K_CTX, stop, module, device, refresh):
+    """Liest Messwerte und aktualisiert beide Zielmodelle.
+
+    Wird als Hintergrund-Thread gestartet und laeuft, bis ``stop`` gesetzt
+    wird. Der Thread aktualisiert EM24 und SE7K und wartet zwischen den
+    Zyklen.
+    :param ctx: ModbusSlaveContext des EM24-Zielmodells.
+    :param SE7K_CTX: ModbusSlaveContext des SE7K-Zielmodells.
+    :param stop: threading.Event zum kontrollierten Beenden des Threads.
+    :param module: Geraetemodul mit einer `values(device)`-Funktion.
+    :param device: Initialisiertes Geraeteobjekt fuer das Geraetemodul.
+    :param refresh: Konfigurierte Aktualisierungsrate des Zaehlerprofils.
+    :return: Kehrt normalerweise erst nach dem Setzen von ``stop`` zurueck.
+    """
 
     this_t = threading.currentThread()
     logger = logging.getLogger()
