@@ -59,6 +59,20 @@ def device(config):
         )
 
 
+def _discover(device, attribute, probe):
+    """Sondiert angeschlossene Geraete einmalig und merkt sich das Ergebnis.
+
+    Ohne Zwischenspeicherung wird die DID jedes moeglichen Zaehlers und jeder
+    moeglichen Batterie in jedem Lesezyklus erneut abgefragt; nicht vorhandene
+    Geraete laufen dabei in den Modbus-Timeout und verzoegern die Messwerte.
+    """
+    cached = getattr(device, attribute, None)
+    if cached is None:
+        cached = probe()
+        setattr(device, attribute, cached)
+    return cached
+
+
 def values(device):
     if not device:
         return {}
@@ -72,8 +86,8 @@ def values(device):
     # append type to key to prevent key name collision with legacy values
     values = {key+'_'+re.search('\'(.*)\'',str(type(value))).group(1):value for key, value in inverter_values.items()}  
     
-    meters = device.meters()
-    batteries = device.batteries()
+    meters = _discover(device, "_proxy_meters", device.meters)
+    batteries = _discover(device, "_proxy_batteries", device.batteries)
     values["connected_meters"] = {}
     values["connected_batteries"] = {}
 

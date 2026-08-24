@@ -1,4 +1,35 @@
 #!/usr/bin/env python3
+"""SolarEdge SE7K to Carlo Gavazzi EM24 Modbus TCP proxy.
+
+English
+-------
+This module acts as a Modbus TCP client and a Modbus TCP server at the same
+time. As a client it cyclically polls a SolarEdge SE7K inverter, which
+provides both its own inverter data and the data of the attached utility
+meter (SE-MTR-3Y-400V-A) in SunSpec format. As a server it republishes that
+data under two unit IDs:
+
+* Unit ID 1 - the utility meter data, mapped to the register layout of a
+  Carlo Gavazzi EM24 energy meter, so that consumers expecting an EM24 can
+  read it unchanged.
+* Unit ID 2 - the values read from the SE7K, kept in their original SunSpec
+  layout (common model, inverter model 103 and meter model 203).
+
+Deutsch
+-------
+Das Modul arbeitet gleichzeitig als Modbus-TCP-Client und als
+Modbus-TCP-Server. Als Client liest es zyklisch einen SolarEdge-SE7K-
+Wechselrichter aus, der sowohl seine eigenen Wechselrichterdaten als auch die
+Daten des angeschlossenen EVU-Zaehlers (SE-MTR-3Y-400V-A) im SunSpec-Format
+bereitstellt. Als Server stellt es diese Daten unter zwei Unit-IDs erneut zur
+Verfuegung:
+
+* Unit-ID 1 - die EVU-Zaehlerdaten, abgebildet auf das Registerlayout eines
+  Carlo-Gavazzi-EM24-Zaehlers, damit Verbraucher, die einen EM24 erwarten,
+  sie unveraendert lesen koennen.
+* Unit-ID 2 - die vom SE7K eingelesenen Werte im urspruenglichen
+  SunSpec-Format (Common Model, Inverter-Modell 103 und Meter-Modell 203).
+"""
 
 import argparse
 import configparser
@@ -120,6 +151,34 @@ def _scale_factor(values, key):
     return 10 ** scale
 
 
+def _reg(values, key, scale, factor):
+    """Rechnet einen SunSpec-Rohwert in einen EM24-Registerwert um.
+
+    Es wird gerundet und nicht abgeschnitten, da die Gleitkommadarstellung
+    von ``10 ** scale`` sonst systematisch ein LSB zu wenig liefert.
+    :param values: Dictionary mit den Rohwerten des Zaehlers.
+    :param key: Schluessel des Rohwerts.
+    :param scale: Aus dem SunSpec-Skalenfaktor berechneter Multiplikator.
+    :param factor: EM24-Registeraufloesung, z.B. 10 fuer 0,1-Schritte.
+    :return: Gerundeter Registerwert als int.
+    """
+    return int(round(values.get(key, 0) * scale * factor))
+
+
+def _reg_sum(values, keys, scale, factor):
+    """Summiert mehrere Rohwerte und rechnet sie in ein EM24-Register um.
+
+    Wird fuer die EM24-Blindenergie benoetigt, die im SunSpec-Modell auf
+    mehrere Quadranten aufgeteilt ist.
+    :param values: Dictionary mit den Rohwerten des Zaehlers.
+    :param keys: Iterable der zu summierenden Schluessel.
+    :param scale: Aus dem SunSpec-Skalenfaktor berechneter Multiplikator.
+    :param factor: EM24-Registeraufloesung.
+    :return: Gerundeter Registerwert als int.
+    """
+    return int(round(sum(values.get(key, 0) for key in keys) * scale * factor))
+
+
 def _log_meter_values(logger, values):
     invalid_scales = [
         key[:-4]
@@ -206,10 +265,12 @@ def setMeterValues(values, block):
     l1n_voltage = values.get("l1n_voltage_int", 0)
     l2n_voltage = values.get("l2n_voltage_int", 0)
     l3n_voltage = values.get("l3n_voltage_int", 0)
-    l12_voltage = _line_voltage(l1n_voltage, l2n_voltage)
-    l23_voltage = _line_voltage(l2n_voltage, l3n_voltage)
-    l31_voltage = _line_voltage(l3n_voltage, l1n_voltage)
-    voltage_ll = int(round((l12_voltage + l23_voltage + l31_voltage) / 3))
+    # Der SE-MTR-3Y-400V-A liefert die Leiterspannungen selbst; nur falls sie
+    # fehlen, werden sie aus den Sternspannungen rekonstruiert.
+    l12_voltage = values.get("l12_voltage_int") or _line_voltage(l1n_voltage, l2n_voltage)
+    l23_voltage = values.get("l23_voltage_int") or _line_voltage(l2n_voltage, l3n_voltage)
+    l31_voltage = values.get("l31_voltage_int") or _line_voltage(l3n_voltage, l1n_voltage)
+    voltage_ll = values.get("voltage_ll_int") or int(round((l12_voltage + l23_voltage + l31_voltage) / 3))
 
     block.add_16bit_uint(voltage_ll)
     block.add_16bit_uint(l12_voltage)
@@ -438,6 +499,7 @@ def t_update(ctx, SE7K_CTX, stop, module, device, refresh):
     logger = logging.getLogger()
 
     while not stop.is_set():
+        cycle_start = time.monotonic()
         try:
             values = module.values(device)
             if not values:
@@ -464,118 +526,128 @@ def t_update(ctx, SE7K_CTX, stop, module, device, refresh):
             frequency_scale = _scale_factor(values, 'frequency_scale_int')
             power_factor_scale = _scale_factor(values, 'power_factor_scale_int')
             energy_active_scale = _scale_factor(values, 'energy_active_scale_int')
-            energy_apparent_scale = _scale_factor(values, 'energy_apparent_scale_int')
+            energy_reactive_scale = _scale_factor(values, 'energy_reactive_scale_int')
+
+            # EM24 kvarh(+/-) TOT entsprechen den Quadrantensummen des SunSpec-Zaehlers
+            import_energy_reactive = _reg_sum(
+                values,
+                ('import_energy_reactive_q1_int', 'import_energy_reactive_q2_int'),
+                energy_reactive_scale, 0.01)
+            export_energy_reactive = _reg_sum(
+                values,
+                ('export_energy_reactive_q3_int', 'export_energy_reactive_q4_int'),
+                energy_reactive_scale, 0.01)
 
             block_0 = BinaryPayloadBuilder(byteorder=Endian.Big, wordorder=Endian.Little)
-            block_0.add_32bit_int(int(values.get('l1n_voltage_int', 0) * voltage_scale * 10)) # l1-n voltage  *10
-            block_0.add_32bit_int(int(values.get('l2n_voltage_int', 0) * voltage_scale * 10)) # l2-n voltage
-            block_0.add_32bit_int(int(values.get('l3n_voltage_int', 0) * voltage_scale * 10)) # l3-n voltage
-            block_0.add_32bit_int(int(values.get('l12_voltage_int', 0) * voltage_scale * 10)) # l1-l2 voltage
-            block_0.add_32bit_int(int(values.get('l23_voltage_int', 0) * voltage_scale * 10)) # l2-l3 voltage
-            block_0.add_32bit_int(int(values.get('l31_voltage_int', 0) * voltage_scale * 10)) # l3-l1 voltage
-            block_0.add_32bit_int(int(abs(values.get('l1_current_int', 0)) * current_scale * 1000)) # current l1  *1000
-            block_0.add_32bit_int(int(abs(values.get('l2_current_int', 0)) * current_scale * 1000)) # current l2
-            block_0.add_32bit_int(int(abs(values.get('l3_current_int', 0)) * current_scale * 1000)) # current l3
-            block_0.add_32bit_int(int(values.get('l1_power_int', 0) * power_scale * -10)) # power l1   *10
-            block_0.add_32bit_int(int(values.get('l2_power_int', 0) * power_scale * -10)) # power l2
-            block_0.add_32bit_int(int(values.get('l3_power_int', 0) * power_scale * -10)) # power l3
-            block_0.add_32bit_int(int(values.get('l1_power_apparent_int', 0) * power_apparent_scale * -10)) # apparent power l1   *10
-            block_0.add_32bit_int(int(values.get('l2_power_apparent_int', 0) * power_apparent_scale * -10)) # apparent power l2
-            block_0.add_32bit_int(int(values.get('l3_power_apparent_int', 0) * power_apparent_scale * -10)) # apparent power l3
-            block_0.add_32bit_int(int(values.get('l1_power_reactive_int', 0) * power_reactive_scale * -10)) # reactive power l1   *10
-            block_0.add_32bit_int(int(values.get('l2_power_reactive_int', 0) * power_reactive_scale * -10)) # reactive power l2
-            block_0.add_32bit_int(int(values.get('l3_power_reactive_int', 0) * power_reactive_scale * -10)) # reactive power l3
-            block_0.add_32bit_int(int(values.get('voltage_ln_int', 0) * voltage_scale * 10)) # l-n voltage  *10
-            block_0.add_32bit_int(int(values.get('voltage_ll_int', 0) * voltage_scale * 10)) # l-l voltage
-            block_0.add_32bit_int(int(values.get('power_int', 0) * power_scale * -10)) # total power              *10
-            block_0.add_32bit_int(int(values.get('power_apparent_int', 0) * power_apparent_scale * -10)) # total apparent power
-            block_0.add_32bit_int(int(values.get('power_reactive_int', 0) * power_reactive_scale * -10)) # total reactive power
-            block_0.add_16bit_int(int(values.get('l1_power_factor_int', 0) * power_factor_scale * 10)) # power factor l1  *1000
-            block_0.add_16bit_int(int(values.get('l2_power_factor_int', 0) * power_factor_scale * 10)) # power factor l2
-            block_0.add_16bit_int(int(values.get('l3_power_factor_int', 0) * power_factor_scale * 10)) # power factor l3
-            block_0.add_16bit_int(int(values.get('power_factor_int', 0) * power_factor_scale * 10)) # power factor
-            block_0.add_16bit_int(0) # Value –1 correspond to L1-L3-L2 sequence, value 0 correspond to L1-L2-L3 sequence (this value is meaningful only in case of 3-phase systems)
-            
-            block_0.add_16bit_uint(int(values.get('frequency_int', 0) * frequency_scale * 10)) # line frequency  *10
+            block_0.add_32bit_int(_reg(values, 'l1n_voltage_int', voltage_scale, 10)) # 0x0000 l1-n voltage  *10
+            block_0.add_32bit_int(_reg(values, 'l2n_voltage_int', voltage_scale, 10)) # 0x0002 l2-n voltage
+            block_0.add_32bit_int(_reg(values, 'l3n_voltage_int', voltage_scale, 10)) # 0x0004 l3-n voltage
+            block_0.add_32bit_int(_reg(values, 'l12_voltage_int', voltage_scale, 10)) # 0x0006 l1-l2 voltage
+            block_0.add_32bit_int(_reg(values, 'l23_voltage_int', voltage_scale, 10)) # 0x0008 l2-l3 voltage
+            block_0.add_32bit_int(_reg(values, 'l31_voltage_int', voltage_scale, 10)) # 0x000A l3-l1 voltage
+            block_0.add_32bit_int(abs(_reg(values, 'l1_current_int', current_scale, 1000))) # 0x000C current l1  *1000
+            block_0.add_32bit_int(abs(_reg(values, 'l2_current_int', current_scale, 1000))) # 0x000E current l2
+            block_0.add_32bit_int(abs(_reg(values, 'l3_current_int', current_scale, 1000))) # 0x0010 current l3
+            block_0.add_32bit_int(_reg(values, 'l1_power_int', power_scale, -10)) # 0x0012 power l1   *10
+            block_0.add_32bit_int(_reg(values, 'l2_power_int', power_scale, -10)) # 0x0014 power l2
+            block_0.add_32bit_int(_reg(values, 'l3_power_int', power_scale, -10)) # 0x0016 power l3
+            block_0.add_32bit_int(_reg(values, 'l1_power_apparent_int', power_apparent_scale, -10)) # 0x0018 apparent power l1   *10
+            block_0.add_32bit_int(_reg(values, 'l2_power_apparent_int', power_apparent_scale, -10)) # 0x001A apparent power l2
+            block_0.add_32bit_int(_reg(values, 'l3_power_apparent_int', power_apparent_scale, -10)) # 0x001C apparent power l3
+            block_0.add_32bit_int(_reg(values, 'l1_power_reactive_int', power_reactive_scale, -10)) # 0x001E reactive power l1   *10
+            block_0.add_32bit_int(_reg(values, 'l2_power_reactive_int', power_reactive_scale, -10)) # 0x0020 reactive power l2
+            block_0.add_32bit_int(_reg(values, 'l3_power_reactive_int', power_reactive_scale, -10)) # 0x0022 reactive power l3
+            block_0.add_32bit_int(_reg(values, 'voltage_ln_int', voltage_scale, 10)) # 0x0024 l-n voltage  *10
+            block_0.add_32bit_int(_reg(values, 'voltage_ll_int', voltage_scale, 10)) # 0x0026 l-l voltage
+            block_0.add_32bit_int(_reg(values, 'power_int', power_scale, -10)) # 0x0028 total power              *10
+            block_0.add_32bit_int(_reg(values, 'power_apparent_int', power_apparent_scale, -10)) # 0x002A total apparent power
+            block_0.add_32bit_int(_reg(values, 'power_reactive_int', power_reactive_scale, -10)) # 0x002C total reactive power
+            block_0.add_16bit_int(_reg(values, 'l1_power_factor_int', power_factor_scale, 10)) # 0x002E power factor l1  *1000
+            block_0.add_16bit_int(_reg(values, 'l2_power_factor_int', power_factor_scale, 10)) # 0x002F power factor l2
+            block_0.add_16bit_int(_reg(values, 'l3_power_factor_int', power_factor_scale, 10)) # 0x0030 power factor l3
+            block_0.add_16bit_int(_reg(values, 'power_factor_int', power_factor_scale, 10)) # 0x0031 power factor
+            block_0.add_16bit_int(0) # 0x0032 Value –1 correspond to L1-L3-L2 sequence, value 0 correspond to L1-L2-L3 sequence (this value is meaningful only in case of 3-phase systems)
 
-            block_0.add_32bit_int(int(values.get('import_energy_active_int', 0) * energy_active_scale / 100)) # imported active energy
-            block_0.add_32bit_int(int(values.get('import_energy_apparent_int', 0) * energy_apparent_scale / 100)) # imported apparent energy
-            block_0.add_32bit_int(56) # demand power
-            block_0.add_32bit_int(58) # maximum demand power
-            block_0.add_32bit_int(int(values.get('import_energy_active_int', 0) * energy_active_scale / 100)) # imported active energy
-            block_0.add_32bit_int(int(values.get('import_energy_apparent_int', 0) * energy_apparent_scale / 100)) # imported apparent energy
-            block_0.add_32bit_int(int(values.get('l1_import_energy_active_int', 0) * energy_active_scale / 100)) # imported active energy l1
-            block_0.add_32bit_int(int(values.get('l2_import_energy_active_int', 0) * energy_active_scale / 100)) # imported active energy l2
-            block_0.add_32bit_int(int(values.get('l3_import_energy_active_int', 0) * energy_active_scale / 100)) # imported active energy l3
-            block_0.add_32bit_int(10) # total active energy Tarif 1
-            block_0.add_32bit_int(20) # total active energy Tarif 2
-            block_0.add_32bit_int(30) # total active energy Tarif 3
-            block_0.add_32bit_int(40) # total active energy Tarif 4
-            block_0.add_32bit_int(int(values.get('export_energy_active_int', 0) * energy_active_scale / 100)) # exported active energy
-            block_0.add_32bit_int(int(values.get('export_energy_apparent_int', 0) * energy_apparent_scale / 100)) # exported apparent energy
-            block_0.add_32bit_int(2400) # hour                                                             *100
-            block_0.add_32bit_int(11) # total apparent energy Tarif 1                                      *10
-            block_0.add_32bit_int(22) # total apparent energy Tarif 2
-            block_0.add_32bit_int(33) # total apparent energy Tarif 3
-            block_0.add_32bit_int(44) # total apparent energy Tarif 4
-            block_0.add_32bit_int(118) # apparent demand power
-            block_0.add_32bit_int(120) # apparent demand power max
-            block_0.add_32bit_int(122) # DMD A max                        *10
+            block_0.add_16bit_uint(_reg(values, 'frequency_int', frequency_scale, 10)) # 0x0033 line frequency  *10
+
+            block_0.add_32bit_int(_reg(values, 'import_energy_active_int', energy_active_scale, 0.01)) # 0x0034 kWh(+) TOT
+            block_0.add_32bit_int(import_energy_reactive) # 0x0036 kvarh(+) TOT
+            block_0.add_32bit_int(56) # 0x0038 demand power
+            block_0.add_32bit_int(58) # 0x003A maximum demand power
+            block_0.add_32bit_int(_reg(values, 'import_energy_active_int', energy_active_scale, 0.01)) # 0x003C kWh(+) PAR
+            block_0.add_32bit_int(import_energy_reactive) # 0x003E kvarh(+) PAR
+            block_0.add_32bit_int(_reg(values, 'l1_import_energy_active_int', energy_active_scale, 0.01)) # 0x0040 kWh(+) L1
+            block_0.add_32bit_int(_reg(values, 'l2_import_energy_active_int', energy_active_scale, 0.01)) # 0x0042 kWh(+) L2
+            block_0.add_32bit_int(_reg(values, 'l3_import_energy_active_int', energy_active_scale, 0.01)) # 0x0044 kWh(+) L3
+            block_0.add_32bit_int(10) # 0x0046 total active energy Tarif 1
+            block_0.add_32bit_int(20) # 0x0048 total active energy Tarif 2
+            block_0.add_32bit_int(30) # 0x004A total active energy Tarif 3
+            block_0.add_32bit_int(40) # 0x004C total active energy Tarif 4
+            block_0.add_32bit_int(_reg(values, 'export_energy_active_int', energy_active_scale, 0.01)) # 0x004E kWh(-) TOT
+            block_0.add_32bit_int(export_energy_reactive) # 0x0050 kvarh(-) TOT
+            block_0.add_32bit_int(2400) # 0x0052 hour                                                       *100
+            block_0.add_32bit_int(11) # 0x0054 total reactive energy Tarif 1                                *10
+            block_0.add_32bit_int(22) # 0x0056 total reactive energy Tarif 2
+            block_0.add_32bit_int(33) # 0x0058 total reactive energy Tarif 3
+            block_0.add_32bit_int(44) # 0x005A total reactive energy Tarif 4
+            block_0.add_32bit_int(118) # 0x005C apparent demand power
+            block_0.add_32bit_int(120) # 0x005E apparent demand power max
+            block_0.add_32bit_int(122) # 0x0060 DMD A max                        *10
             ctx.setValues(3, 0, block_0.to_registers())
             ctx.setValues(4, 0, block_0.to_registers())
 
             block_254 = BinaryPayloadBuilder(byteorder=Endian.Big, wordorder=Endian.Little)
             block_254.add_32bit_int(2400) # hour    *100                                                         *100
             block_254.add_32bit_int(256)  # unused                                                       *100
-            block_254.add_32bit_int(int(values.get('voltage_ln_int', 0) * voltage_scale * 10)) # l-n voltage  *10
-            block_254.add_32bit_int(int(values.get('voltage_ll_int', 0) * voltage_scale * 10)) # l-l voltage
-            block_254.add_32bit_int(int(values.get('power_int', 0) * power_scale * -10)) # total power              *10
-            block_254.add_32bit_int(int(values.get('power_apparent_int', 0) * power_apparent_scale * -10)) # total apparent power
-            block_254.add_32bit_int(int(values.get('power_reactive_int', 0) * power_reactive_scale * -10)) # total reactive power
-            block_254.add_32bit_int(int(values.get('power_factor_int', 0) * power_factor_scale * 10)) # power factor
+            block_254.add_32bit_int(_reg(values, 'voltage_ln_int', voltage_scale, 10)) # l-n voltage  *10
+            block_254.add_32bit_int(_reg(values, 'voltage_ll_int', voltage_scale, 10)) # l-l voltage
+            block_254.add_32bit_int(_reg(values, 'power_int', power_scale, -10)) # total power              *10
+            block_254.add_32bit_int(_reg(values, 'power_apparent_int', power_apparent_scale, -10)) # total apparent power
+            block_254.add_32bit_int(_reg(values, 'power_reactive_int', power_reactive_scale, -10)) # total reactive power
+            block_254.add_32bit_int(_reg(values, 'power_factor_int', power_factor_scale, 10)) # power factor
             block_254.add_32bit_int(0) # Value –1 correspond to L1-L3-L2 sequence, value 0 correspond to L1-L2-L3 sequence (this value is meaningful only in case of 3-phase systems)
-            block_254.add_32bit_int(int(values.get('frequency_int', 0) * frequency_scale * 10)) # line frequency  *10
-            block_254.add_32bit_int(int(values.get('import_energy_active_int', 0) * energy_active_scale / 100)) # imported active energy
-            block_254.add_32bit_int(int(values.get('import_energy_apparent_int', 0) * energy_apparent_scale / 100)) # imported apparent energy
-            block_254.add_32bit_int(int(values.get('export_energy_active_int', 0) * energy_active_scale / 100)) # exported active energy
-            block_254.add_32bit_int(int(values.get('export_energy_apparent_int', 0) * energy_apparent_scale / 100)) # exported apparent energy
+            block_254.add_32bit_int(_reg(values, 'frequency_int', frequency_scale, 10)) # line frequency  *10
+            block_254.add_32bit_int(_reg(values, 'import_energy_active_int', energy_active_scale, 0.01)) # kWh(+) TOT
+            block_254.add_32bit_int(import_energy_reactive) # kvarh(+) TOT
+            block_254.add_32bit_int(_reg(values, 'export_energy_active_int', energy_active_scale, 0.01)) # kWh(-) TOT
+            block_254.add_32bit_int(export_energy_reactive) # kvarh(-) TOT
             block_254.add_32bit_int(56) # demand power
             block_254.add_32bit_int(58) # maximum demand power
 
 
 
 
-            block_254.add_32bit_int(int(values.get('l12_voltage_int', 0) * voltage_scale * 10)) # l1-l2 voltage
-            block_254.add_32bit_int(int(values.get('l1n_voltage_int', 0) * voltage_scale * 10)) # l1-n voltage  *10
-            block_254.add_32bit_int(int(abs(values.get('l1_current_int', 0)) * current_scale * 1000)) # current l1  *1000
-            block_254.add_32bit_int(int(values.get('l1_power_int', 0) * power_scale * -10)) # power l1   *10
-            block_254.add_32bit_int(int(values.get('l1_power_apparent_int', 0) * power_apparent_scale * -10)) # apparent power l1   *10
-            block_254.add_32bit_int(int(values.get('l1_power_reactive_int', 0) * power_reactive_scale * -10)) # reactive power l1   *10
-            block_254.add_32bit_int(int(values.get('l1_power_factor_int', 0) * power_factor_scale * 10)) # power factor l1  *1000
+            block_254.add_32bit_int(_reg(values, 'l12_voltage_int', voltage_scale, 10)) # l1-l2 voltage
+            block_254.add_32bit_int(_reg(values, 'l1n_voltage_int', voltage_scale, 10)) # l1-n voltage  *10
+            block_254.add_32bit_int(abs(_reg(values, 'l1_current_int', current_scale, 1000))) # current l1  *1000
+            block_254.add_32bit_int(_reg(values, 'l1_power_int', power_scale, -10)) # power l1   *10
+            block_254.add_32bit_int(_reg(values, 'l1_power_apparent_int', power_apparent_scale, -10)) # apparent power l1   *10
+            block_254.add_32bit_int(_reg(values, 'l1_power_reactive_int', power_reactive_scale, -10)) # reactive power l1   *10
+            block_254.add_32bit_int(_reg(values, 'l1_power_factor_int', power_factor_scale, 10)) # power factor l1  *1000
 
-            block_254.add_32bit_int(int(values.get('l23_voltage_int', 0) * voltage_scale * 10)) # l2-l3 voltage
-            block_254.add_32bit_int(int(values.get('l2n_voltage_int', 0) * voltage_scale * 10)) # l2-n voltage
-            block_254.add_32bit_int(int(abs(values.get('l2_current_int', 0)) * current_scale * 1000)) # current l2
-            block_254.add_32bit_int(int(values.get('l2_power_int', 0) * power_scale * -10)) # power l2
-            block_254.add_32bit_int(int(values.get('l2_power_apparent_int', 0) * power_apparent_scale * -10)) # apparent power l2
-            block_254.add_32bit_int(int(values.get('l2_power_reactive_int', 0) * power_reactive_scale * -10)) # reactive power l2
-            block_254.add_32bit_int(int(values.get('l2_power_factor_int', 0) * power_factor_scale * 10)) # power factor l2
+            block_254.add_32bit_int(_reg(values, 'l23_voltage_int', voltage_scale, 10)) # l2-l3 voltage
+            block_254.add_32bit_int(_reg(values, 'l2n_voltage_int', voltage_scale, 10)) # l2-n voltage
+            block_254.add_32bit_int(abs(_reg(values, 'l2_current_int', current_scale, 1000))) # current l2
+            block_254.add_32bit_int(_reg(values, 'l2_power_int', power_scale, -10)) # power l2
+            block_254.add_32bit_int(_reg(values, 'l2_power_apparent_int', power_apparent_scale, -10)) # apparent power l2
+            block_254.add_32bit_int(_reg(values, 'l2_power_reactive_int', power_reactive_scale, -10)) # reactive power l2
+            block_254.add_32bit_int(_reg(values, 'l2_power_factor_int', power_factor_scale, 10)) # power factor l2
 
-            block_254.add_32bit_int(int(values.get('l31_voltage_int', 0) * voltage_scale * 10)) # l3-l1 voltage
-            block_254.add_32bit_int(int(values.get('l3n_voltage_int', 0) * voltage_scale * 10)) # l3-n voltage
-            block_254.add_32bit_int(int(abs(values.get('l3_current_int', 0)) * current_scale * 1000)) # current l3
-            block_254.add_32bit_int(int(values.get('l3_power_int', 0) * power_scale * -10)) # power l3
-            block_254.add_32bit_int(int(values.get('l3_power_apparent_int', 0) * power_apparent_scale * -10)) # apparent power l3
-            block_254.add_32bit_int(int(values.get('l3_power_reactive_int', 0) * power_reactive_scale * -10)) # reactive power l3
-            block_254.add_32bit_int(int(values.get('l3_power_factor_int', 0) * power_factor_scale * 10)) # power factor l3
+            block_254.add_32bit_int(_reg(values, 'l31_voltage_int', voltage_scale, 10)) # l3-l1 voltage
+            block_254.add_32bit_int(_reg(values, 'l3n_voltage_int', voltage_scale, 10)) # l3-n voltage
+            block_254.add_32bit_int(abs(_reg(values, 'l3_current_int', current_scale, 1000))) # current l3
+            block_254.add_32bit_int(_reg(values, 'l3_power_int', power_scale, -10)) # power l3
+            block_254.add_32bit_int(_reg(values, 'l3_power_apparent_int', power_apparent_scale, -10)) # apparent power l3
+            block_254.add_32bit_int(_reg(values, 'l3_power_reactive_int', power_reactive_scale, -10)) # reactive power l3
+            block_254.add_32bit_int(_reg(values, 'l3_power_factor_int', power_factor_scale, 10)) # power factor l3
 
             block_254.add_32bit_int(0) # Value –1 correspond to L1-L3-L2 sequence, value 0 correspond to L1-L2-L3 sequence (this value is meaningful only in case of 3-phase systems)
-            
-            block_254.add_32bit_int(int(values.get('import_energy_active_int', 0) * energy_active_scale / 100)) # imported active energy
-            block_254.add_32bit_int(int(values.get('import_energy_apparent_int', 0) * energy_apparent_scale / 100)) # imported apparent energy
-            block_254.add_32bit_int(int(values.get('l1_import_energy_active_int', 0) * energy_active_scale / 100)) # imported active energy l1
-            block_254.add_32bit_int(int(values.get('l2_import_energy_active_int', 0) * energy_active_scale / 100)) # imported active energy l2
-            block_254.add_32bit_int(int(values.get('l3_import_energy_active_int', 0) * energy_active_scale / 100)) # imported active energy l3
+
+            block_254.add_32bit_int(_reg(values, 'import_energy_active_int', energy_active_scale, 0.01)) # kWh(+) PAR
+            block_254.add_32bit_int(import_energy_reactive) # kvarh(+) PAR
+            block_254.add_32bit_int(_reg(values, 'l1_import_energy_active_int', energy_active_scale, 0.01)) # kWh(+) L1
+            block_254.add_32bit_int(_reg(values, 'l2_import_energy_active_int', energy_active_scale, 0.01)) # kWh(+) L2
+            block_254.add_32bit_int(_reg(values, 'l3_import_energy_active_int', energy_active_scale, 0.01)) # kWh(+) L3
             block_254.add_32bit_int(10) # total active energy Tarif 1
             block_254.add_32bit_int(20) # total active energy Tarif 2
             block_254.add_32bit_int(30) # total active energy Tarif 3
@@ -584,10 +656,10 @@ def t_update(ctx, SE7K_CTX, stop, module, device, refresh):
             block_254.add_32bit_int(348)  # unused                                                       *100
             block_254.add_32bit_int(350)  # unused                                                       *100
             block_254.add_32bit_int(352)  # unused                                                       *100
-            block_254.add_32bit_int(11) # total apparent energy Tarif 1                                      *10
-            block_254.add_32bit_int(22) # total apparent energy Tarif 2
-            block_254.add_32bit_int(33) # total apparent energy Tarif 3
-            block_254.add_32bit_int(44) # total apparent energy Tarif 4
+            block_254.add_32bit_int(11) # total reactive energy Tarif 1                                      *10
+            block_254.add_32bit_int(22) # total reactive energy Tarif 2
+            block_254.add_32bit_int(33) # total reactive energy Tarif 3
+            block_254.add_32bit_int(44) # total reactive energy Tarif 4
             block_254.add_32bit_int(262)  # unused                                                       *100
             block_254.add_32bit_int(264)  # unused                                                       *100
             block_254.add_32bit_int(266)  # unused                                                       *100
@@ -620,7 +692,8 @@ def t_update(ctx, SE7K_CTX, stop, module, device, refresh):
         except Exception as e:
             logger.critical(f"{this_t.name}: {e}")
         finally:
-            time.sleep(0.9)
+            # Zykluszeit einhalten, statt die Lesedauer zusaetzlich zu warten
+            time.sleep(max(0.0, refresh - (time.monotonic() - cycle_start)))
 
 
 if __name__ == "__main__":
@@ -644,7 +717,7 @@ if __name__ == "__main__":
             "ct_inverted": 0,
             "phase_offset": 120,
             "serial_number": 987654,
-            "refresh_rate": 5
+            "refresh_rate": 1
         }
     }
 
