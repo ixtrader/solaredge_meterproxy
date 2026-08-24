@@ -480,41 +480,54 @@ def t_update_se7k(ctx, values):
 
 
 
-def t_update(ctx, SE7K_CTX, stop, module, device, refresh):
+def t_update(ctx, SE7K_CTX, stop, module, device, refresh, full_refresh):
     """Liest Messwerte und aktualisiert beide Zielmodelle.
 
     Wird als Hintergrund-Thread gestartet und laeuft, bis ``stop`` gesetzt
-    wird. Der Thread aktualisiert EM24 und SE7K und wartet zwischen den
-    Zyklen.
+    wird. In jedem Zyklus wird nur die Wirkleistung nachgelesen, da die
+    Victron-Nullregelung ausschliesslich diese auswertet und auf Totzeit mit
+    Aufschwingen reagiert. Der vollstaendige Registersatz inklusive SE7K-Modell
+    wird nur im Abstand von ``full_refresh`` gelesen.
     :param ctx: ModbusSlaveContext des EM24-Zielmodells.
     :param SE7K_CTX: ModbusSlaveContext des SE7K-Zielmodells.
     :param stop: threading.Event zum kontrollierten Beenden des Threads.
     :param module: Geraetemodul mit einer `values(device)`-Funktion.
     :param device: Initialisiertes Geraeteobjekt fuer das Geraetemodul.
-    :param refresh: Konfigurierte Aktualisierungsrate des Zaehlerprofils.
+    :param refresh: Zykluszeit des schnellen Wirkleistungspfads in Sekunden.
+    :param full_refresh: Abstand der vollstaendigen Lesezyklen in Sekunden.
     :return: Kehrt normalerweise erst nach dem Setzen von ``stop`` zurueck.
     """
 
     this_t = threading.currentThread()
     logger = logging.getLogger()
 
+    fast_read = getattr(module, "power_values", None)
+    if fast_read is None:
+        full_refresh = 0.0
+
+    values = {}
+    next_full = 0.0
+
     while not stop.is_set():
         cycle_start = time.monotonic()
         try:
-            values = module.values(device)
-            if not values:
-                logger.debug(f"{this_t.name}: no new values")
-                continue
+            if not values or cycle_start >= next_full:
+                full_values = module.values(device)
+                if not full_values:
+                    logger.debug(f"{this_t.name}: no new values")
+                    continue
 
-            if not t_update_se7k(SE7K_CTX, values):
-                logger.debug("SE7K register update was not applied")
+                if not t_update_se7k(SE7K_CTX, full_values):
+                    logger.debug("SE7K register update was not applied")
 
-            # use the values from the SE-MTR-3Y-400V-A SE Meter
-            values = values["connected_meters"]["Meter1"]      
+                # use the values from the SE-MTR-3Y-400V-A SE Meter
+                values = full_values["connected_meters"]["Meter1"]
+                next_full = cycle_start + full_refresh
+            else:
+                values.update(fast_read(device))
 
             if logger.isEnabledFor(logging.DEBUG):
                 _log_meter_values(logger, values)
-
 
 
             # apply SunSpec scale factors to convert raw ints to real-world units
@@ -692,8 +705,10 @@ def t_update(ctx, SE7K_CTX, stop, module, device, refresh):
         except Exception as e:
             logger.critical(f"{this_t.name}: {e}")
         finally:
+            elapsed = time.monotonic() - cycle_start
+            logger.debug(f"{this_t.name}: cycle took {elapsed:.3f} s")
             # Zykluszeit einhalten, statt die Lesedauer zusaetzlich zu warten
-            time.sleep(max(0.0, refresh - (time.monotonic() - cycle_start)))
+            time.sleep(max(0.0, refresh - elapsed))
 
 
 if __name__ == "__main__":
@@ -717,7 +732,8 @@ if __name__ == "__main__":
             "ct_inverted": 0,
             "phase_offset": 120,
             "serial_number": 987654,
-            "refresh_rate": 1
+            "refresh_rate": 0.5,
+            "full_refresh_rate": 5
         }
     }
 
@@ -836,7 +852,8 @@ if __name__ == "__main__":
                         update_t_stop,
                         meter_module,
                         meter_device,
-                        confparser[meter].getfloat("refresh_rate", fallback=default_config["meters"]["refresh_rate"])
+                        confparser[meter].getfloat("refresh_rate", fallback=default_config["meters"]["refresh_rate"]),
+                        confparser[meter].getfloat("full_refresh_rate", fallback=default_config["meters"]["full_refresh_rate"])
                     )
                 )
 

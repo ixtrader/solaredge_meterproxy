@@ -73,6 +73,30 @@ def _discover(device, attribute, probe):
     return cached
 
 
+def _typed_keys(raw):
+    return {f"{key}_{type(value).__name__}": value for key, value in raw.items()}
+
+
+def power_values(device, meter="Meter1"):
+    """Liest nur die Wirkleistungsregister des angeschlossenen Zaehlers.
+
+    Die Register liegen zusammenhaengend (0x9D0E..0x9D12) und werden in einer
+    einzigen Modbus-Transaktion gelesen. Das haelt die Totzeit der
+    Victron-Nullregelung klein, die ausschliesslich die Wirkleistung auswertet.
+    :param device: Initialisiertes Inverter-Objekt.
+    :param meter: Name des Zaehlers, wie ihn `solaredge_modbus` vergibt.
+    :return: Dictionary mit den Rohwerten, Schluessel wie in :func:`values`.
+    """
+    params = _discover(device, "_proxy_meters", device.meters).get(meter)
+    if not params:
+        return {}
+
+    keys = ("power", "l1_power", "l2_power", "l3_power", "power_scale")
+    registers = {k: v for k, v in params.registers.items() if k in keys}
+
+    return _typed_keys(params._read_all(registers, solaredge_modbus.registerType.HOLDING))
+
+
 def values(device):
     if not device:
         return {}
