@@ -21,7 +21,7 @@ def device(config):
     # parity    parity setting, N, E or O
     # baud      baud rate
 
-    timeout = config.getint("timeout", fallback=1)
+    timeout = config.getfloat("timeout", fallback=1)
     retries = config.getint("retries", fallback=3)
     unit = config.getint("src_address", fallback=1)
 
