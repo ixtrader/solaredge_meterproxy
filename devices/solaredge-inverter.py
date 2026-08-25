@@ -67,9 +67,10 @@ def _discover(device, attribute, probe):
     Geraete laufen dabei in den Modbus-Timeout und verzoegern die Messwerte.
     """
     cached = getattr(device, attribute, None)
-    if cached is None:
+    if not cached:
         cached = probe()
-        setattr(device, attribute, cached)
+        if cached:
+            setattr(device, attribute, cached)
     return cached
 
 
@@ -129,7 +130,10 @@ def values(device):
 
     # TODO Calculate the values for the SE-WNC-3Y-400-MB-K1 meter from the SolarEdge meter provided by SE7K
 
-    meterValues = values["connected_meters"]["Meter1"]      
+    meterValues = values["connected_meters"].get("Meter1")
+    if not meterValues:
+        logger.warning("No Meter1 detected; skipping meter update")
+        return {}
 
 
     SE_WNC_3Y_400_MB_K1_values = {
