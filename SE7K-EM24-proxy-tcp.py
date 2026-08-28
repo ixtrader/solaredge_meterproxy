@@ -371,7 +371,7 @@ def t_update_se7k(ctx, values):
         if values.get("frequency_int") == 0:
             logger.debug("frequency_int is zero; update may be invalid")
 
-        block_40000 = BinaryPayloadBuilder(byteorder=Endian.Big, wordorder=Endian.Big)
+        block_40000 = BinaryPayloadBuilder(byteorder=Endian.BIG, wordorder=Endian.BIG)
         block_40000.add_string("SunS") 
         block_40000.add_16bit_int(1)
         block_40000.add_16bit_int (values.get("C_SunSpec_Length_int", 65))
@@ -443,18 +443,18 @@ def t_update_se7k(ctx, values):
         block_40000.add_string("123456789012345678901234") # 12 dummy words = 24 bytes
         ctx.setValues(3, 40000, block_40000.to_registers())
 
-        block_40121 = BinaryPayloadBuilder(byteorder=Endian.Big, wordorder=Endian.Big)
+        block_40121 = BinaryPayloadBuilder(byteorder=Endian.BIG, wordorder=Endian.BIG)
         setMeterValues(values["connected_meters"]["Meter1"], block_40121)
         ctx.setValues(3, 40121, block_40121.to_registers())
 
-        # block_40295 = BinaryPayloadBuilder(byteorder=Endian.Big, wordorder=Endian.Big)
+        # block_40295 = BinaryPayloadBuilder(byteorder=Endian.BIG, wordorder=Endian.BIG)
         # ctx.setValues(3, 40295, block_40295.to_registers())
-        # block_40469 = BinaryPayloadBuilder(byteorder=Endian.Big, wordorder=Endian.Big)
+        # block_40469 = BinaryPayloadBuilder(byteorder=Endian.BIG, wordorder=Endian.BIG)
         # ctx.setValues(3, 40469, block_40469.to_registers())
 
-        # block_57598 = BinaryPayloadBuilder(byteorder=Endian.Big, wordorder=Endian.Big)
+        # block_57598 = BinaryPayloadBuilder(byteorder=Endian.BIG, wordorder=Endian.BIG)
         # ctx.setValues(3, 57598, block_57598.to_registers())
-        # block_57854 = BinaryPayloadBuilder(byteorder=Endian.Big, wordorder=Endian.Big)
+        # block_57854 = BinaryPayloadBuilder(byteorder=Endian.BIG, wordorder=Endian.BIG)
         # ctx.setValues(3, 57854, block_57854.to_registers())
     except Exception as e:
         logger.critical(f"SE7K update failed: {e}")
@@ -551,7 +551,7 @@ def t_update(ctx, SE7K_CTX, stop, module, device, refresh, full_refresh, power_f
                 ('export_energy_reactive_q3_int', 'export_energy_reactive_q4_int'),
                 energy_reactive_scale, 0.01)
 
-            block_0 = BinaryPayloadBuilder(byteorder=Endian.Big, wordorder=Endian.Little)
+            block_0 = BinaryPayloadBuilder(byteorder=Endian.BIG, wordorder=Endian.LITTLE)
             block_0.add_32bit_int(_reg(values, 'l1n_voltage_int', voltage_scale, 10)) # 0x0000 l1-n voltage  *10
             block_0.add_32bit_int(_reg(values, 'l2n_voltage_int', voltage_scale, 10)) # 0x0002 l2-n voltage
             block_0.add_32bit_int(_reg(values, 'l3n_voltage_int', voltage_scale, 10)) # 0x0004 l3-n voltage
@@ -609,7 +609,7 @@ def t_update(ctx, SE7K_CTX, stop, module, device, refresh, full_refresh, power_f
             ctx.setValues(3, 0, block_0.to_registers())
             ctx.setValues(4, 0, block_0.to_registers())
 
-            block_254 = BinaryPayloadBuilder(byteorder=Endian.Big, wordorder=Endian.Little)
+            block_254 = BinaryPayloadBuilder(byteorder=Endian.BIG, wordorder=Endian.LITTLE)
             block_254.add_32bit_int(2400) # hour    *100                                                         *100
             block_254.add_32bit_int(256)  # unused                                                       *100
             block_254.add_32bit_int(_reg(values, 'voltage_ln_int', voltage_scale, 10)) # l-n voltage  *10
@@ -772,17 +772,17 @@ if __name__ == "__main__":
                 EM24_slave_ctx = EM24SlaveContext()
                 SE7K_slave_ctx = ModbusSlaveContext()
 
-                # block_11 = BinaryPayloadBuilder(byteorder=Endian.Big, wordorder=Endian.Little)
+                # block_11 = BinaryPayloadBuilder(byteorder=Endian.BIG, wordorder=Endian.LITTLE)
                 # block_11.add_16bit_int(1648)
                 # EM24_slave_ctx.setValues(3, 11, block_11.to_registers())
                 # EM24_slave_ctx.setValues(4, 11, block_11.to_registers())
 
-                block_0 = BinaryPayloadBuilder(byteorder=Endian.Big, wordorder=Endian.Little)
+                block_0 = BinaryPayloadBuilder(byteorder=Endian.BIG, wordorder=Endian.LITTLE)
                 block_0.add_32bit_int(1234)
                 EM24_slave_ctx.setValues(3, 0, block_0.to_registers())
                 EM24_slave_ctx.setValues(4, 0, block_0.to_registers())
 
-                block_770 = BinaryPayloadBuilder(byteorder=Endian.Big, wordorder=Endian.Little)
+                block_770 = BinaryPayloadBuilder(byteorder=Endian.BIG, wordorder=Endian.LITTLE)
                 block_770.add_16bit_int(4126) # Version and revision measurment module
                 block_770.add_16bit_int(68)   # 
                 block_770.add_16bit_int(4127) # Version and revision communication module
@@ -791,22 +791,22 @@ if __name__ == "__main__":
                 EM24_slave_ctx.setValues(3, 770, block_770.to_registers())
                 EM24_slave_ctx.setValues(4, 770, block_770.to_registers())
 
-                block_848 = BinaryPayloadBuilder(byteorder=Endian.Big, wordorder=Endian.Little)
+                block_848 = BinaryPayloadBuilder(byteorder=Endian.BIG, wordorder=Endian.LITTLE)
                 block_848.add_16bit_int(4128) # Measurement module’s firmware CRC
                 EM24_slave_ctx.setValues(3, 848, block_848.to_registers())
                 EM24_slave_ctx.setValues(4, 848, block_848.to_registers())
 
-                block_20480 = BinaryPayloadBuilder(byteorder=Endian.Big, wordorder=Endian.Little)
+                block_20480 = BinaryPayloadBuilder(byteorder=Endian.BIG, wordorder=Endian.LITTLE)
                 block_20480.add_string("MB24DINAV23XE1X") 
                 EM24_slave_ctx.setValues(3, 20480, block_20480.to_registers())
                 EM24_slave_ctx.setValues(4, 20480, block_20480.to_registers())
 
-                block_41216 = BinaryPayloadBuilder(byteorder=Endian.Big, wordorder=Endian.Little)
+                block_41216 = BinaryPayloadBuilder(byteorder=Endian.BIG, wordorder=Endian.LITTLE)
                 block_41216.add_16bit_int(3) # Front selector status
                 EM24_slave_ctx.setValues(3, 41216, block_41216.to_registers())
                 EM24_slave_ctx.setValues(4, 41216, block_41216.to_registers())
 
-                block_4096 = BinaryPayloadBuilder(byteorder=Endian.Big, wordorder=Endian.Little)
+                block_4096 = BinaryPayloadBuilder(byteorder=Endian.BIG, wordorder=Endian.LITTLE)
                 block_4096.add_16bit_int(9999) # PASSWORD
                 block_4096.add_16bit_int(0)     # unused
                 block_4096.add_16bit_int(0)    # Measuring system
@@ -825,13 +825,13 @@ if __name__ == "__main__":
                 EM24_slave_ctx.setValues(3, 4096, block_4096.to_registers())
                 EM24_slave_ctx.setValues(4, 4096, block_4096.to_registers())
 
-                block_4360 = BinaryPayloadBuilder(byteorder=Endian.Big, wordorder=Endian.Little)
+                block_4360 = BinaryPayloadBuilder(byteorder=Endian.BIG, wordorder=Endian.LITTLE)
                 block_4360.add_16bit_int(2) # PASSWORD
                 block_4360.add_16bit_int(2) # PASSWORD
                 EM24_slave_ctx.setValues(3, 4360, block_4360.to_registers())
                 EM24_slave_ctx.setValues(4, 4360, block_4360.to_registers())
 
-                block_40960 = BinaryPayloadBuilder(byteorder=Endian.Big, wordorder=Endian.Little)
+                block_40960 = BinaryPayloadBuilder(byteorder=Endian.BIG, wordorder=Endian.LITTLE)
                 block_40960.add_16bit_int(1) # Type of application
                 block_40960.add_16bit_int(3) # Default page for selector position “LOCK”
                 block_40960.add_16bit_int(1) # Default page for selector position “1”
