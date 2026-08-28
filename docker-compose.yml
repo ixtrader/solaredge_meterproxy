@@ -1,0 +1,16 @@
+services:
+  se7k-em24-proxy:
+    build: .
+    image: se7k-em24-proxy:latest
+    container_name: se7k-em24-proxy
+    restart: unless-stopped
+    # host networking so the meter emulation is reachable from Victron/OpenWB
+    # on the LAN without NAT hairpinning, and so it can reach the inverter.
+    network_mode: host
+    volumes:
+      - ./SE-MTR-3Y-400V-A.conf:/config/SE-MTR-3Y-400V-A.conf:ro
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
