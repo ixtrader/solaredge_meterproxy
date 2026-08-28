@@ -151,6 +151,57 @@ def _scale_factor(values, key):
     return 10 ** scale
 
 
+_ACTIVE_POWER_KEYS = ("power_int", "l1_power_int", "l2_power_int", "l3_power_int")
+
+
+class PowerEwmaFilter:
+    """Exponentiell gewichteter gleitender Mittelwert der Wirkleistung.
+
+    Die Victron-Nullregelung wertet ausschliesslich die Wirkleistung aus und
+    neigt bei verrauschten Messwerten zum Aufschwingen. Der Filter glaettet
+    daher nur diese Werte. Der Glaettungsfaktor wird aus der tatsaechlich
+    vergangenen Zykluszeit berechnet, damit die Zeitkonstante unabhaengig von
+    Jitter und ausgelassenen Zyklen bleibt.
+    """
+
+    def __init__(self, tau):
+        """:param tau: Zeitkonstante in Sekunden, <=0 deaktiviert den Filter."""
+        self._tau = tau
+        self._state = {}
+        self._last = None
+
+    def apply(self, values, now):
+        """Ersetzt die Wirkleistungs-Rohwerte durch ihre gefilterten Werte.
+
+        Wird in jedem Lesezyklus des Update-Threads aufgerufen.
+        :param values: Dictionary mit den Rohwerten des Zaehlers.
+        :param now: Zeitstempel des Zyklus aus `time.monotonic()`.
+        :return: None; ``values`` wird direkt veraendert.
+        """
+        if self._tau <= 0:
+            return
+
+        # Gefiltert wird in Watt, damit ein Wechsel des SunSpec-Skalenfaktors
+        # den Filterzustand nicht verfaelscht.
+        scale = _scale_factor(values, "power_scale_int")
+        if not scale:
+            return
+
+        dt = 0.0 if self._last is None else max(0.0, now - self._last)
+        self._last = now
+        alpha = 1.0 - math.exp(-dt / self._tau)
+
+        for key in _ACTIVE_POWER_KEYS:
+            raw = values.get(key)
+            if raw is None:
+                continue
+            sample = raw * scale
+            previous = self._state.get(key)
+            filtered = sample if previous is None else previous + alpha * (sample - previous)
+            self._state[key] = filtered
+            values[key] = int(round(filtered / scale))
+
+
 def _reg(values, key, scale, factor):
     """Rechnet einen SunSpec-Rohwert in einen EM24-Registerwert um.
 
@@ -480,7 +531,7 @@ def t_update_se7k(ctx, values):
 
 
 
-def t_update(ctx, SE7K_CTX, stop, module, device, refresh, full_refresh):
+def t_update(ctx, SE7K_CTX, stop, module, device, refresh, full_refresh, power_filter_tau=0.0):
     """Liest Messwerte und aktualisiert beide Zielmodelle.
 
     Wird als Hintergrund-Thread gestartet und laeuft, bis ``stop`` gesetzt
@@ -495,6 +546,8 @@ def t_update(ctx, SE7K_CTX, stop, module, device, refresh, full_refresh):
     :param device: Initialisiertes Geraeteobjekt fuer das Geraetemodul.
     :param refresh: Zykluszeit des schnellen Wirkleistungspfads in Sekunden.
     :param full_refresh: Abstand der vollstaendigen Lesezyklen in Sekunden.
+    :param power_filter_tau: Zeitkonstante des EWMA-Wirkleistungsfilters in
+        Sekunden, 0 deaktiviert die Glaettung.
     :return: Kehrt normalerweise erst nach dem Setzen von ``stop`` zurueck.
     """
 
@@ -505,6 +558,7 @@ def t_update(ctx, SE7K_CTX, stop, module, device, refresh, full_refresh):
     if fast_read is None:
         full_refresh = 0.0
 
+    power_filter = PowerEwmaFilter(power_filter_tau)
     values = {}
     next_full = 0.0
 
@@ -525,6 +579,9 @@ def t_update(ctx, SE7K_CTX, stop, module, device, refresh, full_refresh):
                 next_full = cycle_start + full_refresh
             else:
                 values.update(fast_read(device))
+
+            # Nur das EM24-Modell wird geglaettet, das SE7K-Modell oben bleibt roh.
+            power_filter.apply(values, time.monotonic())
 
             if logger.isEnabledFor(logging.DEBUG):
                 _log_meter_values(logger, values)
@@ -733,7 +790,8 @@ if __name__ == "__main__":
             "phase_offset": 120,
             "serial_number": 987654,
             "refresh_rate": 0.5,
-            "full_refresh_rate": 5
+            "full_refresh_rate": 5,
+            "power_filter_tau": 2.0
         }
     }
 
@@ -853,7 +911,8 @@ if __name__ == "__main__":
                         meter_module,
                         meter_device,
                         confparser[meter].getfloat("refresh_rate", fallback=default_config["meters"]["refresh_rate"]),
-                        confparser[meter].getfloat("full_refresh_rate", fallback=default_config["meters"]["full_refresh_rate"])
+                        confparser[meter].getfloat("full_refresh_rate", fallback=default_config["meters"]["full_refresh_rate"]),
+                        confparser[meter].getfloat("power_filter_tau", fallback=default_config["meters"]["power_filter_tau"])
                     )
                 )
 
