@@ -2,11 +2,10 @@ FROM python:3.11-slim
 
 WORKDIR /app
 
-# Pinned to the pymodbus/solaredge_modbus 2.x/0.7.x line that this proxy is
-# written against; see README.md for why newer major versions break it.
+# solaredge_modbus 0.8.0 uses the Pymodbus 3.x API.
 RUN pip install --no-cache-dir \
-    'pymodbus<3.0.0' \
-    'solaredge_modbus<0.7.1' \
+    'pymodbus>=3.5.0,<3.6.0' \
+    'solaredge-modbus==0.8.0' \
     influxdb>=5.3.0 \
     requests>=2.23.0 \
     sdm_modbus>=0.5.0

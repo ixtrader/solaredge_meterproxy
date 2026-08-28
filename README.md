@@ -19,8 +19,7 @@ sudo journalctl -u modbus-proxy.service      # view log
 
 *Installation on a Raspberry Pi:*
 ```bash
-sudo pip3 install 'pymodbus<3.0.0'
-sudo pip3 install 'solaredge_modbus<0.7.1'
+sudo pip3 install 'pymodbus>=3.5.0,<3.6.0' 'solaredge-modbus==0.8.0'
 cd ~
 mkdir gitHubClones
 cd gitHubClones/  

@@ -40,19 +40,16 @@ import sys
 import threading
 import time
 
-from pymodbus.server.sync import StartTcpServer
-from pymodbus.server.sync import ModbusConnectedRequestHandler
-from pymodbus.server.sync import ModbusTcpServer
+from pymodbus.server import StartTcpServer
 from pymodbus.constants import Endian
 from pymodbus.device import ModbusDeviceIdentification
-from pymodbus.transaction import ModbusSocketFramer
-from pymodbus.transaction import ModbusRtuFramer
-from pymodbus.datastore import ModbusSlaveContext
+from pymodbus.datastore import ModbusDeviceContext
 from pymodbus.datastore import ModbusServerContext
+from pymodbus.framer import FramerType
 from pymodbus.payload import BinaryPayloadBuilder
 
 
-class EM24SlaveContext(ModbusSlaveContext):
+class EM24DeviceContext(ModbusDeviceContext):
     def getValues(self, fx, address, count=1):
         """Liest EM24-Register.
 
@@ -66,99 +63,6 @@ class EM24SlaveContext(ModbusSlaveContext):
             logger.debug("Gavazzi model number 1648 supplied")
             return [1648]
         return super().getValues(fx, address, count)
-
-
-
-class ModbusMyTcpRequestHandler(ModbusConnectedRequestHandler):
-    def execute(self, request):
-        is_read_request = request.function_code in (1, 2, 3, 4)
-        response = super().execute(request)
-        if is_read_request:
-            self.server.record_delivery()
-        return response
-
-
-class ModbusMyTcpServer(ModbusTcpServer):
-    allow_reuse_address = True
-    clientCounter={}
-    delivered_count = 0
-
-    def process_request(self, request, client):
-        """Verarbeitet eine Modbus-Anfrage und zaehlt Clientverbindungen.
-
-        Wird von Pymodbus fuer jede eingehende Anfrage aufgerufen.
-        :param request: Dekodierte Modbus-Anfrage.
-        :param client: Clientadresse als Netzwerkadresse/Tuple.
-        :return: Rueckgabewert der Basisklassenimplementierung.
-        """
-        self.clientCounter[client[0]] = self.clientCounter.get(client[0],0) + 1
-        
-        logger = logging.getLogger()
-        if self.clientCounter[client[0]]%1000 == 1:
-            logger.debug("Served client %s, request count=%s, request=%s", client[0], self.clientCounter[client[0]], request)
-
-        super().process_request(request,client)
-
-    def record_delivery(self):
-        """Zaehlt erfolgreich beantwortete Modbus-Leseanfragen."""
-        self.delivered_count += 1
-        if self.delivered_count % 100 == 0:
-            print("+", flush=True)
-
-    def shutdown(self):
-        """Beendet den Modbus-Server.
-
-        Wird beim Herunterfahren oder durch Pymodbus aufgerufen.
-        :return: Rueckgabewert der Basisklassenimplementierung.
-        """
-        logger = logging.getLogger()
-        logger.info("shutdown to serve client")
-        super().shutdown()
-
-    def server_close(self):
-        """Schliesst den Modbus-Server.
-
-        Wird nach dem Ende der Server-Schleife von Pymodbus aufgerufen.
-        :return: Rueckgabewert der Basisklassenimplementierung.
-        """
-        logger = logging.getLogger()
-        logger.debug("Modbus server stopped")
-        super().server_close()
-
-
-# --------------------------------------------------------------------------- #
-# Creation Factorie
-# --------------------------------------------------------------------------- #
-def StartMyTcpServer(context=None, identity=None, address=None,
-                   custom_functions=[], **kwargs):
-    """Erzeugt und startet den TCP-Server.
-
-    Wird einmal aus dem Hauptprogramm aufgerufen und blockiert anschliessend
-    in der Server-Schleife.
-    :param context: Modbus-Datenmodell mit den Slave-Kontexten.
-    :param identity: Optionale Modbus-Geraeteidentifikation.
-    :param address: Bind-Adresse als `(host, port)`-Tuple.
-    :param custom_functions: Optionale Liste zusaetzlicher Modbus-Funktionen.
-    :param kwargs: Weitere Optionen fuer den Pymodbus-Server, insbesondere
-        der Framer.
-    :return: Kehrt erst nach dem Beenden des Servers zurueck.
-    """
-    framer = kwargs.pop("framer", ModbusSocketFramer)
-    server = ModbusMyTcpServer(
-        context,
-        framer,
-        identity,
-        address,
-        handler=ModbusMyTcpRequestHandler,
-        **kwargs
-    )
-
-    for f in custom_functions:
-        server.decoder.register(f)
-    try:
-        server.serve_forever()
-    finally:
-        server.server_close()
 
 
 def _line_voltage(phase_a, phase_b):
@@ -447,7 +351,7 @@ def t_update_se7k(ctx, values):
     """Schreibt SE7K-Messwerte in die Register.
 
     Wird von :func:`t_update` in jedem Aktualisierungszyklus aufgerufen.
-    :param ctx: ModbusSlaveContext des SE7K-Zielmodells.
+    :param ctx: ModbusDeviceContext des SE7K-Zielmodells.
     :param values: Dictionary mit Inverterwerten, Rohwerten und Scale-Faktoren.
     :return: True bei erfolgreicher Aktualisierung, sonst False.
     """
@@ -567,8 +471,8 @@ def t_update(ctx, SE7K_CTX, stop, module, device, refresh, full_refresh, power_f
     Victron-Nullregelung ausschliesslich diese auswertet und auf Totzeit mit
     Aufschwingen reagiert. Der vollstaendige Registersatz inklusive SE7K-Modell
     wird nur im Abstand von ``full_refresh`` gelesen.
-    :param ctx: ModbusSlaveContext des EM24-Zielmodells.
-    :param SE7K_CTX: ModbusSlaveContext des SE7K-Zielmodells.
+    :param ctx: ModbusDeviceContext des EM24-Zielmodells.
+    :param SE7K_CTX: ModbusDeviceContext des SE7K-Zielmodells.
     :param stop: threading.Event zum kontrollierten Beenden des Threads.
     :param module: Geraetemodul mit einer `values(device)`-Funktion.
     :param device: Initialisiertes Geraeteobjekt fuer das Geraetemodul.
@@ -864,8 +768,8 @@ if __name__ == "__main__":
                 meter_module = importlib.import_module(f"devices.{meter_type}")
                 meter_device = meter_module.device(confparser[meter])
 
-                EM24_slave_ctx = EM24SlaveContext()
-                SE7K_slave_ctx = ModbusSlaveContext()
+                EM24_slave_ctx = EM24DeviceContext()
+                SE7K_slave_ctx = ModbusDeviceContext()
 
                 # block_11 = BinaryPayloadBuilder(byteorder=Endian.Big, wordorder=Endian.Little)
                 # block_11.add_16bit_int(1648)
@@ -965,15 +869,12 @@ if __name__ == "__main__":
             logger.warning(f"No meters defined in {args.config}")
 
         config_framer = confparser["server"].get("framer", fallback=default_config["server"]["framer"])
-        framer = False
-
-        if config_framer == "socket":
-            framer = ModbusSocketFramer
-        elif config_framer == "rtu":
-            framer = ModbusRtuFramer
+        framer = FramerType.SOCKET
+        if config_framer == "rtu":
+            framer = FramerType.RTU
 
         identity = ModbusDeviceIdentification()
-        server_ctx = ModbusServerContext(slaves=slaves, single=False)
+        server_ctx = ModbusServerContext(devices=slaves, single=False)
 
         time.sleep(1)
     
@@ -981,7 +882,7 @@ if __name__ == "__main__":
             t.start()
             logger.info(f"Starting {t}")
 
-        StartMyTcpServer(
+        StartTcpServer(
             server_ctx,
             framer=framer,
             identity=identity,

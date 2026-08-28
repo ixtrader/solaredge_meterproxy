@@ -88,7 +88,7 @@ def power_values(device, meter="Meter1"):
     :param meter: Name des Zaehlers, wie ihn `solaredge_modbus` vergibt.
     :return: Dictionary mit den Rohwerten, Schluessel wie in :func:`values`.
     """
-    params = _discover(device, "_proxy_meters", device.meters).get(meter)
+    params = _discover(device, "_proxy_meters", device.meters()).get(meter)
     if not params:
         return {}
 
@@ -111,8 +111,8 @@ def values(device):
     # append type to key to prevent key name collision with legacy values
     values = {key+'_'+re.search('\'(.*)\'',str(type(value))).group(1):value for key, value in inverter_values.items()}  
     
-    meters = _discover(device, "_proxy_meters", device.meters)
-    batteries = _discover(device, "_proxy_batteries", device.batteries)
+    meters = _discover(device, "_proxy_meters", device.meters())
+    batteries = _discover(device, "_proxy_batteries", device.batteries())
     values["connected_meters"] = {}
     values["connected_batteries"] = {}
 
