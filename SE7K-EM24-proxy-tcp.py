@@ -43,13 +43,14 @@ import time
 from pymodbus.server import StartTcpServer
 from pymodbus.constants import Endian
 from pymodbus.device import ModbusDeviceIdentification
-from pymodbus.datastore import ModbusDeviceContext
+from pymodbus.datastore import ModbusSlaveContext
 from pymodbus.datastore import ModbusServerContext
-from pymodbus.framer import FramerType
+from pymodbus.framer import ModbusRtuFramer
+from pymodbus.framer import ModbusSocketFramer
 from pymodbus.payload import BinaryPayloadBuilder
 
 
-class EM24DeviceContext(ModbusDeviceContext):
+class EM24SlaveContext(ModbusSlaveContext):
     def getValues(self, fx, address, count=1):
         """Liest EM24-Register.
 
@@ -351,7 +352,7 @@ def t_update_se7k(ctx, values):
     """Schreibt SE7K-Messwerte in die Register.
 
     Wird von :func:`t_update` in jedem Aktualisierungszyklus aufgerufen.
-    :param ctx: ModbusDeviceContext des SE7K-Zielmodells.
+    :param ctx: ModbusSlaveContext des SE7K-Zielmodells.
     :param values: Dictionary mit Inverterwerten, Rohwerten und Scale-Faktoren.
     :return: True bei erfolgreicher Aktualisierung, sonst False.
     """
@@ -471,8 +472,8 @@ def t_update(ctx, SE7K_CTX, stop, module, device, refresh, full_refresh, power_f
     Victron-Nullregelung ausschliesslich diese auswertet und auf Totzeit mit
     Aufschwingen reagiert. Der vollstaendige Registersatz inklusive SE7K-Modell
     wird nur im Abstand von ``full_refresh`` gelesen.
-    :param ctx: ModbusDeviceContext des EM24-Zielmodells.
-    :param SE7K_CTX: ModbusDeviceContext des SE7K-Zielmodells.
+    :param ctx: ModbusSlaveContext des EM24-Zielmodells.
+    :param SE7K_CTX: ModbusSlaveContext des SE7K-Zielmodells.
     :param stop: threading.Event zum kontrollierten Beenden des Threads.
     :param module: Geraetemodul mit einer `values(device)`-Funktion.
     :param device: Initialisiertes Geraeteobjekt fuer das Geraetemodul.
@@ -768,8 +769,8 @@ if __name__ == "__main__":
                 meter_module = importlib.import_module(f"devices.{meter_type}")
                 meter_device = meter_module.device(confparser[meter])
 
-                EM24_slave_ctx = EM24DeviceContext()
-                SE7K_slave_ctx = ModbusDeviceContext()
+                EM24_slave_ctx = EM24SlaveContext()
+                SE7K_slave_ctx = ModbusSlaveContext()
 
                 # block_11 = BinaryPayloadBuilder(byteorder=Endian.Big, wordorder=Endian.Little)
                 # block_11.add_16bit_int(1648)
@@ -869,12 +870,12 @@ if __name__ == "__main__":
             logger.warning(f"No meters defined in {args.config}")
 
         config_framer = confparser["server"].get("framer", fallback=default_config["server"]["framer"])
-        framer = FramerType.SOCKET
+        framer = ModbusSocketFramer
         if config_framer == "rtu":
-            framer = FramerType.RTU
+            framer = ModbusRtuFramer
 
         identity = ModbusDeviceIdentification()
-        server_ctx = ModbusServerContext(devices=slaves, single=False)
+        server_ctx = ModbusServerContext(slaves=slaves, single=False)
 
         time.sleep(1)
     
@@ -883,7 +884,7 @@ if __name__ == "__main__":
             logger.info(f"Starting {t}")
 
         StartTcpServer(
-            server_ctx,
+            context=server_ctx,
             framer=framer,
             identity=identity,
             address=(
