@@ -78,6 +78,12 @@ def _typed_keys(raw):
     return {f"{key}_{type(value).__name__}": value for key, value in raw.items()}
 
 
+def _use_inverter_unit(device, devices):
+    for params in devices.values():
+        params.unit = device.unit
+    return devices
+
+
 def power_values(device, meter="Meter1"):
     """Liest nur die Wirkleistungsregister des angeschlossenen Zaehlers.
 
@@ -88,7 +94,9 @@ def power_values(device, meter="Meter1"):
     :param meter: Name des Zaehlers, wie ihn `solaredge_modbus` vergibt.
     :return: Dictionary mit den Rohwerten, Schluessel wie in :func:`values`.
     """
-    params = _discover(device, "_proxy_meters", device.meters()).get(meter)
+    meters = _use_inverter_unit(
+        device, _discover(device, "_proxy_meters", device.meters))
+    params = meters.get(meter)
     if not params:
         return {}
 
@@ -111,13 +119,21 @@ def values(device):
     # append type to key to prevent key name collision with legacy values
     values = {key+'_'+re.search('\'(.*)\'',str(type(value))).group(1):value for key, value in inverter_values.items()}  
     
-    meters = _discover(device, "_proxy_meters", device.meters())
-    batteries = _discover(device, "_proxy_batteries", device.batteries())
+    meters = _discover(device, "_proxy_meters", device.meters)
+    if not meters:
+        logger.warning("Meter discovery returned no devices; trying Meter1 directly")
+        meters = {"Meter1": solaredge_modbus.Meter(
+            offset=0, parent=device, unit=device.unit)}
+        setattr(device, "_proxy_meters", meters)
+    meters = _use_inverter_unit(device, meters)
+    batteries = _discover(device, "_proxy_batteries", device.batteries)
     values["connected_meters"] = {}
     values["connected_batteries"] = {}
 
     for meter, params in meters.items():
         meter_values = params.read_all()
+        if not meter_values:
+            logger.warning("No register data read from %s (inverter unit %s)", meter, device.unit)
         values["connected_meters"][meter] = {key+'_'+re.search('\'(.*)\'',str(type(value))).group(1):value for key, value in meter_values.items()}
 
     for battery, params in batteries.items():

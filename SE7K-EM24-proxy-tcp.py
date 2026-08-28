@@ -51,6 +51,17 @@ from pymodbus.payload import BinaryPayloadBuilder
 
 
 class EM24SlaveContext(ModbusSlaveContext):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self._successful_deliveries = 0
+        self._delivery_lock = threading.Lock()
+
+    def _report_delivery(self):
+        with self._delivery_lock:
+            self._successful_deliveries += 1
+            if self._successful_deliveries % 100 == 0:
+                print(". 100 Werte ausgeliefert", flush=True)
+
     def getValues(self, fx, address, count=1):
         """Liest EM24-Register.
 
@@ -62,8 +73,18 @@ class EM24SlaveContext(ModbusSlaveContext):
         """
         if (address == 11 and count==1):
             logger.debug("Gavazzi model number 1648 supplied")
+            self._report_delivery()
             return [1648]
-        return super().getValues(fx, address, count)
+        try:
+            values = super().getValues(fx, address, count)
+        except Exception:
+            print("- Delivery exception",flush=True)
+            raise
+        if values:
+            self._report_delivery()
+        else:
+            print("- No values to deliver",flush=True)
+        return values
 
 
 def _line_voltage(phase_a, phase_b):
@@ -484,7 +505,7 @@ def t_update(ctx, SE7K_CTX, stop, module, device, refresh, full_refresh, power_f
     :return: Kehrt normalerweise erst nach dem Setzen von ``stop`` zurueck.
     """
 
-    this_t = threading.currentThread()
+    this_t = threading.current_thread()
     logger = logging.getLogger()
 
     fast_read = getattr(module, "power_values", None)
@@ -495,16 +516,17 @@ def t_update(ctx, SE7K_CTX, stop, module, device, refresh, full_refresh, power_f
     values = {}
     next_full = 0.0
     successful_reads = 0
-
     while not stop.is_set():
         cycle_start = time.monotonic()
         try:
             if not values or cycle_start >= next_full:
                 full_values = module.values(device)
                 if not full_values:
-                    logger.info(f"{this_t.name}: no data read from SE7K")
+                    print("- No full data from SE7K", flush=True)
                     continue
                 successful_reads += 1
+                if successful_reads % 100 == 0:
+                    print("+ 100 Werte vom SE7K gelesen (full)", flush=True)
 
                 if not t_update_se7k(SE7K_CTX, full_values):
                     logger.debug("SE7K register update was not applied")
@@ -515,13 +537,12 @@ def t_update(ctx, SE7K_CTX, stop, module, device, refresh, full_refresh, power_f
             else:
                 power_values = fast_read(device)
                 if not power_values:
-                    logger.info(f"{this_t.name}: no power data read from SE7K")
+                    print("- No power data read from SE7K", flush=True)
                 else:
                     values.update(power_values)
                     successful_reads += 1
-
-            if successful_reads and successful_reads % 100 == 0:
-                print(".", flush=True)
+                    if successful_reads % 100 == 0:
+                        print("+ 100 Werte vom SE7K gelesen", flush=True)
 
             # Nur das EM24-Modell wird geglaettet, das SE7K-Modell oben bleibt roh.
             power_filter.apply(values, time.monotonic())
@@ -704,6 +725,7 @@ def t_update(ctx, SE7K_CTX, stop, module, device, refresh, full_refresh, power_f
             # "l3_demand_power_active", 0)) # demand power l3
         except Exception as e:
             logger.critical(f"{this_t.name}: {e}")
+            print("- Exception while converting", flush=True)
         finally:
             elapsed = time.monotonic() - cycle_start
             logger.debug(f"{this_t.name}: cycle took {elapsed:.3f} s")
@@ -755,6 +777,16 @@ if __name__ == "__main__":
     if args.verbose:
         logger.setLevel(logging.DEBUG)
 
+    active_server_config = dict(confparser["server"])
+    active_server_config.update({
+        "address": confparser["server"].get("address", fallback=default_config["server"]["address"]),
+        "port": confparser["server"].getint("port", fallback=default_config["server"]["port"]),
+        "framer": confparser["server"].get("framer", fallback=default_config["server"]["framer"]),
+        "log_level": logging.getLevelName(logger.getEffectiveLevel()),
+        "meters": confparser["server"].get("meters", fallback=default_config["server"]["meters"]),
+    })
+    logger.info("Active server configuration: %s", active_server_config)
+
     slaves = {}
     threads = []
     thread_stops = []
@@ -766,6 +798,19 @@ if __name__ == "__main__":
             for meter in meters:
                 address = confparser[meter].getint("dst_address", fallback=default_config["meters"]["dst_address"])
                 meter_type = confparser[meter].get("type", fallback=default_config["meters"]["type"])
+                active_meter_config = dict(confparser[meter])
+                active_meter_config.update({
+                    "dst_address": address,
+                    "type": meter_type,
+                    "ct_current": confparser[meter].getint("ct_current", fallback=default_config["meters"]["ct_current"]),
+                    "ct_inverted": confparser[meter].getint("ct_inverted", fallback=default_config["meters"]["ct_inverted"]),
+                    "phase_offset": confparser[meter].getint("phase_offset", fallback=default_config["meters"]["phase_offset"]),
+                    "serial_number": confparser[meter].getint("serial_number", fallback=default_config["meters"]["serial_number"]),
+                    "refresh_rate": confparser[meter].getfloat("refresh_rate", fallback=default_config["meters"]["refresh_rate"]),
+                    "full_refresh_rate": confparser[meter].getfloat("full_refresh_rate", fallback=default_config["meters"]["full_refresh_rate"]),
+                    "power_filter_tau": confparser[meter].getfloat("power_filter_tau", fallback=default_config["meters"]["power_filter_tau"]),
+                })
+                logger.info("Active meter configuration [%s]: %s", meter, active_meter_config)
                 meter_module = importlib.import_module(f"devices.{meter_type}")
                 meter_device = meter_module.device(confparser[meter])
 
