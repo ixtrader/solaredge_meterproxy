@@ -442,7 +442,7 @@ def t_update_se7k(ctx, values):
         block_40000.add_string("SunS") 
         block_40000.add_16bit_int(1)
         block_40000.add_16bit_int (values.get("C_SunSpec_Length_int", 65))
-        block_40000.add_string    ((values.get("c_manufacturer_str","") + "-proxy").ljust(32,' '))
+        block_40000.add_string    ((values.get("c_manufacturer_str","") + "-truenas").ljust(32,' '))
         block_40000.add_string    (values.get("c_model_str"         ,"12345678901234567890123456789012").ljust(32,' '))
         block_40000.add_string    ("NOT_IMPLEMENTED.".ljust(16,' '))
         block_40000.add_string    (values.get("c_version_str"       ,"1234567890123456").ljust(16,' '))
