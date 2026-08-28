@@ -41,6 +41,7 @@ import threading
 import time
 
 from pymodbus.server.sync import StartTcpServer
+from pymodbus.server.sync import ModbusConnectedRequestHandler
 from pymodbus.server.sync import ModbusTcpServer
 from pymodbus.constants import Endian
 from pymodbus.device import ModbusDeviceIdentification
@@ -68,8 +69,19 @@ class EM24SlaveContext(ModbusSlaveContext):
 
 
 
+class ModbusMyTcpRequestHandler(ModbusConnectedRequestHandler):
+    def execute(self, request):
+        is_read_request = request.function_code in (1, 2, 3, 4)
+        response = super().execute(request)
+        if is_read_request:
+            self.server.record_delivery()
+        return response
+
+
 class ModbusMyTcpServer(ModbusTcpServer):
+    allow_reuse_address = True
     clientCounter={}
+    delivered_count = 0
 
     def process_request(self, request, client):
         """Verarbeitet eine Modbus-Anfrage und zaehlt Clientverbindungen.
@@ -86,6 +98,12 @@ class ModbusMyTcpServer(ModbusTcpServer):
             logger.debug("Served client %s, request count=%s, request=%s", client[0], self.clientCounter[client[0]], request)
 
         super().process_request(request,client)
+
+    def record_delivery(self):
+        """Zaehlt erfolgreich beantwortete Modbus-Leseanfragen."""
+        self.delivered_count += 1
+        if self.delivered_count % 100 == 0:
+            print("+", flush=True)
 
     def shutdown(self):
         """Beendet den Modbus-Server.
@@ -126,11 +144,21 @@ def StartMyTcpServer(context=None, identity=None, address=None,
     :return: Kehrt erst nach dem Beenden des Servers zurueck.
     """
     framer = kwargs.pop("framer", ModbusSocketFramer)
-    server = ModbusMyTcpServer(context, framer, identity, address, **kwargs)
+    server = ModbusMyTcpServer(
+        context,
+        framer,
+        identity,
+        address,
+        handler=ModbusMyTcpRequestHandler,
+        **kwargs
+    )
 
     for f in custom_functions:
         server.decoder.register(f)
-    server.serve_forever()
+    try:
+        server.serve_forever()
+    finally:
+        server.server_close()
 
 
 def _line_voltage(phase_a, phase_b):
@@ -561,6 +589,7 @@ def t_update(ctx, SE7K_CTX, stop, module, device, refresh, full_refresh, power_f
     power_filter = PowerEwmaFilter(power_filter_tau)
     values = {}
     next_full = 0.0
+    successful_reads = 0
 
     while not stop.is_set():
         cycle_start = time.monotonic()
@@ -568,8 +597,9 @@ def t_update(ctx, SE7K_CTX, stop, module, device, refresh, full_refresh, power_f
             if not values or cycle_start >= next_full:
                 full_values = module.values(device)
                 if not full_values:
-                    logger.debug(f"{this_t.name}: no new values")
+                    logger.info(f"{this_t.name}: no data read from SE7K")
                     continue
+                successful_reads += 1
 
                 if not t_update_se7k(SE7K_CTX, full_values):
                     logger.debug("SE7K register update was not applied")
@@ -578,7 +608,15 @@ def t_update(ctx, SE7K_CTX, stop, module, device, refresh, full_refresh, power_f
                 values = full_values["connected_meters"]["Meter1"]
                 next_full = cycle_start + full_refresh
             else:
-                values.update(fast_read(device))
+                power_values = fast_read(device)
+                if not power_values:
+                    logger.info(f"{this_t.name}: no power data read from SE7K")
+                else:
+                    values.update(power_values)
+                    successful_reads += 1
+
+            if successful_reads and successful_reads % 100 == 0:
+                print(".", flush=True)
 
             # Nur das EM24-Modell wird geglaettet, das SE7K-Modell oben bleibt roh.
             power_filter.apply(values, time.monotonic())
